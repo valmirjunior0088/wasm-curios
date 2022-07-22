@@ -308,6 +308,10 @@ instance Serialize Instr where
 
     LocalTee localIdx -> byte 0x22 <> serialize localIdx
 
+    GlobalGet globalIdx _ -> byte 0x23 <> serialize globalIdx
+
+    GlobalSet globalIdx _ -> byte 0x24 <> serialize globalIdx
+
     I32Load memArg -> byte 0x28 <> serialize memArg
 
     I64Load memArg -> byte 0x29 <> serialize memArg
@@ -433,6 +437,12 @@ instance RelocSerialize Instr where
       <> relocEmpty (byte 0x05)
       <> mconcat (map relocSerialize elseInstrs)
       <> relocEmpty (byte 0x0B)
+    
+    GlobalGet (GlobalIdx globalIdx) symIdx -> relocEmpty (byte 0x23)
+      <> relocSingleton (unsignedFixed 5 globalIdx) R_WASM_GLOBAL_INDEX_LEB symIdx
+
+    GlobalSet (GlobalIdx globalIdx) symIdx -> relocEmpty (byte 0x24)
+      <> relocSingleton (unsignedFixed 5 globalIdx) R_WASM_GLOBAL_INDEX_LEB symIdx
 
     Call (FuncIdx funcIdx) symIdx -> relocEmpty (byte 0x10)
       <> relocSingleton (unsignedFixed 5 funcIdx) R_WASM_FUNCTION_INDEX_LEB symIdx

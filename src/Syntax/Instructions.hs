@@ -6,7 +6,7 @@ module Syntax.Instructions
   )
   where
 
-import Syntax.Conventions (TypeIdx, FuncIdx, TableIdx, LocalIdx, LabelIdx, SymIdx, Vec)
+import Syntax.Conventions (TypeIdx, FuncIdx, TableIdx, GlobalIdx, LocalIdx, LabelIdx, SymIdx, Vec)
 import Syntax.Types (ValType)
 import Data.Word (Word32)
 import Data.Int (Int32, Int64)
@@ -37,6 +37,8 @@ data Instr =
   LocalGet LocalIdx |
   LocalSet LocalIdx |
   LocalTee LocalIdx |
+  GlobalGet GlobalIdx SymIdx |
+  GlobalSet GlobalIdx SymIdx |
   I32Load MemArg |
   I64Load MemArg |
   F32Load MemArg |
