@@ -2,8 +2,8 @@
 
 module Syntax.Module
   ( Module (..)
-  , Construct (..)
-  , construct
+  , empty
+  , MonadConstruct (..)
   , putType
   , putFuncImport
   , putTableImport
@@ -21,6 +21,10 @@ module Syntax.Module
   , putElem
   , putCode
   , putData
+  , ConstructT
+  , runConstructT
+  , Construct
+  , runConstruct
   )
   where
 
@@ -62,7 +66,8 @@ import Syntax.LLVM
 
 import Data.Word (Word8)
 import Control.Monad (when)
-import Control.Monad.State (MonadState, State, execState, get, put)
+import Control.Monad.State (MonadState, StateT, execStateT, get, put)
+import Control.Monad.Identity (Identity, runIdentity)
 
 data Module = Module
   { typeSec :: [FuncType]
@@ -110,29 +115,26 @@ empty = Module
   , nextSymIdx = 0
   }
 
-newtype Construct a =
-  Construct (State Module a)
-  deriving (Functor, Applicative, Monad, MonadState Module)
+class Monad m => MonadConstruct m where
+  getModule :: m Module
+  putModule :: Module -> m ()
 
-construct :: Construct a -> Module
-construct (Construct action) = execState action empty
-
-putType :: FuncType -> Construct TypeIdx
+putType :: MonadConstruct m => FuncType -> m TypeIdx
 putType funcType = do
   state@Module
     { typeSec
     , nextTypeIdx
     }
-    <- get
+    <- getModule
 
-  put state
+  putModule state
     { typeSec = typeSec ++ [funcType]
     , nextTypeIdx = succ nextTypeIdx
     }
 
   return nextTypeIdx
 
-putFuncImport :: Name -> Name -> TypeIdx -> Construct (FuncIdx, SymIdx)
+putFuncImport :: MonadConstruct m => Name -> Name -> TypeIdx -> m (FuncIdx, SymIdx)
 putFuncImport namespace name typeIdx = do
   state@Module
     { importSec
@@ -141,7 +143,7 @@ putFuncImport namespace name typeIdx = do
     , nextFuncIdx
     , nextSymIdx
     }
-    <- get
+    <- getModule
   
   when (length funcSec > 0)
     (error "can't import functions after having declared a function")
@@ -161,7 +163,7 @@ putFuncImport namespace name typeIdx = do
     
     info = SymInfo (SYMTAB_FUNCTION nextFuncIdx Nothing) flags
 
-  put state
+  putModule state
     { importSec = importSec ++ [item]
     , linkingSec = linkingSec ++ [info]
     , nextFuncIdx = succ nextFuncIdx
@@ -170,7 +172,7 @@ putFuncImport namespace name typeIdx = do
   
   return (nextFuncIdx, nextSymIdx)
 
-putTableImport :: Name -> Name -> TableType -> Construct (TableIdx, SymIdx)
+putTableImport :: MonadConstruct m => Name -> Name -> TableType -> m (TableIdx, SymIdx)
 putTableImport namespace name tableType = do
   state@Module
     { importSec
@@ -179,7 +181,7 @@ putTableImport namespace name tableType = do
     , nextTableIdx
     , nextSymIdx
     }
-    <- get
+    <- getModule
   
   when (length tableSec > 0)
     (error "can't import tables after having declared a table")
@@ -199,7 +201,7 @@ putTableImport namespace name tableType = do
     
     info = SymInfo (SYMTAB_TABLE nextTableIdx Nothing) flags
   
-  put state
+  putModule state
     { importSec = importSec ++ [item]
     , linkingSec = linkingSec ++ [info]
     , nextTableIdx = succ nextTableIdx
@@ -208,29 +210,29 @@ putTableImport namespace name tableType = do
   
   return (nextTableIdx, nextSymIdx)
 
-putMemImport :: Name -> Name -> MemType -> Construct MemIdx
+putMemImport :: MonadConstruct m => Name -> Name -> MemType -> m MemIdx
 putMemImport namespace name memType = do
   state@Module
     { importSec
     , memSec
     , nextMemIdx
     }
-    <- get
-  
+    <- getModule
+
   when (length memSec > 0)
     (error "can't import memories after having declared a memory")
   
   let
     item = Import namespace name (ImportMem memType)
   
-  put state
+  putModule state
     { importSec = importSec ++ [item]
     , nextMemIdx = succ nextMemIdx
     }
   
   return nextMemIdx
 
-putGlobalImport :: Name -> Name -> GlobalType -> Construct (GlobalIdx, SymIdx)
+putGlobalImport :: MonadConstruct m => Name -> Name -> GlobalType -> m (GlobalIdx, SymIdx)
 putGlobalImport namespace name globalType = do
   state@Module
     { importSec
@@ -239,7 +241,7 @@ putGlobalImport namespace name globalType = do
     , nextGlobalIdx
     , nextSymIdx
     }
-    <- get
+    <- getModule
   
   when (length globalSec > 0)
     (error "can't import globals after having declared a global")
@@ -259,7 +261,7 @@ putGlobalImport namespace name globalType = do
     
     info = SymInfo (SYMTAB_GLOBAL nextGlobalIdx Nothing) flags
   
-  put state
+  putModule state
     { importSec = importSec ++ [item]
     , linkingSec = linkingSec ++ [info]
     , nextGlobalIdx = succ nextGlobalIdx
@@ -268,7 +270,7 @@ putGlobalImport namespace name globalType = do
   
   return (nextGlobalIdx, nextSymIdx)
 
-putFunc :: Name -> TypeIdx -> Construct (FuncIdx, SymIdx)
+putFunc :: MonadConstruct m => Name -> TypeIdx -> m (FuncIdx, SymIdx)
 putFunc name typeIdx = do
   state@Module
     { funcSec
@@ -276,7 +278,7 @@ putFunc name typeIdx = do
     , nextFuncIdx
     , nextSymIdx
     }
-    <- get
+    <- getModule
 
   let
     flags = SymFlags
@@ -291,7 +293,7 @@ putFunc name typeIdx = do
 
     info = SymInfo (SYMTAB_FUNCTION nextFuncIdx (Just name)) flags
   
-  put state
+  putModule state
     { funcSec = funcSec ++ [typeIdx]
     , linkingSec = linkingSec ++ [info]
     , nextFuncIdx = succ nextFuncIdx
@@ -300,7 +302,7 @@ putFunc name typeIdx = do
   
   return (nextFuncIdx, nextSymIdx)
 
-putTable :: Name -> TableType -> Construct (TableIdx, SymIdx)
+putTable :: MonadConstruct m => Name -> TableType -> m (TableIdx, SymIdx)
 putTable name tableType = do
   state@Module
     { tableSec
@@ -308,7 +310,7 @@ putTable name tableType = do
     , nextTableIdx
     , nextSymIdx
     }
-    <- get
+    <- getModule
   
   let
     flags = SymFlags
@@ -323,7 +325,7 @@ putTable name tableType = do
     
     info = SymInfo (SYMTAB_TABLE nextTableIdx (Just name)) flags
   
-  put state
+  putModule state
     { tableSec = tableSec ++ [Table tableType]
     , linkingSec = linkingSec ++ [info]
     , nextTableIdx = succ nextTableIdx
@@ -332,22 +334,22 @@ putTable name tableType = do
   
   return (nextTableIdx, nextSymIdx)
 
-putMem :: MemType -> Construct MemIdx
+putMem :: MonadConstruct m => MemType -> m MemIdx
 putMem memType = do
   state@Module
     { memSec
     , nextMemIdx
     }
-    <- get
+    <- getModule
   
-  put state
+  putModule state
     { memSec = memSec ++ [Mem memType]
     , nextMemIdx = succ nextMemIdx
     }
   
   return nextMemIdx
 
-putGlobal :: Name -> GlobalType -> Expr -> Construct (GlobalIdx, SymIdx)
+putGlobal :: MonadConstruct m => Name -> GlobalType -> Expr -> m (GlobalIdx, SymIdx)
 putGlobal name globalType expr = do
   state@Module
     { globalSec
@@ -355,7 +357,7 @@ putGlobal name globalType expr = do
     , nextGlobalIdx
     , nextSymIdx
     }
-    <- get
+    <- getModule
   
   let
     flags = SymFlags
@@ -370,7 +372,7 @@ putGlobal name globalType expr = do
     
     info = SymInfo (SYMTAB_GLOBAL nextGlobalIdx (Just name)) flags
   
-  put state
+  putModule state
     { globalSec = globalSec ++ [Global globalType expr]
     , linkingSec = linkingSec ++ [info]
     , nextGlobalIdx = succ nextGlobalIdx
@@ -379,42 +381,42 @@ putGlobal name globalType expr = do
   
   return (nextGlobalIdx, nextSymIdx)
 
-putFuncExport :: Name -> FuncIdx -> Construct ()
+putFuncExport :: MonadConstruct m => Name -> FuncIdx -> m ()
 putFuncExport name funcIdx = do
-  state@Module { exportSec } <- get
-  put state { exportSec = exportSec ++ [Export name (ExportFunc funcIdx)] }
+  state@Module { exportSec } <- getModule
+  putModule state { exportSec = exportSec ++ [Export name (ExportFunc funcIdx)] }
 
-putTableExport :: Name -> TableIdx -> Construct ()
+putTableExport :: MonadConstruct m => Name -> TableIdx -> m ()
 putTableExport name tableIdx = do
-  state@Module { exportSec } <- get
-  put state { exportSec = exportSec ++ [Export name (ExportTable tableIdx)] }
+  state@Module { exportSec } <- getModule
+  putModule state { exportSec = exportSec ++ [Export name (ExportTable tableIdx)] }
 
-putMemExport :: Name -> MemIdx -> Construct ()
+putMemExport :: MonadConstruct m => Name -> MemIdx -> m ()
 putMemExport name memIdx = do
-  state@Module { exportSec } <- get
-  put state { exportSec = exportSec ++ [Export name (ExportMem memIdx)] }
+  state@Module { exportSec } <- getModule
+  putModule state { exportSec = exportSec ++ [Export name (ExportMem memIdx)] }
 
-putGlobalExport :: Name -> GlobalIdx -> Construct ()
+putGlobalExport :: MonadConstruct m => Name -> GlobalIdx -> m ()
 putGlobalExport name globalIdx = do
-  state@Module { exportSec } <- get
-  put state { exportSec = exportSec ++ [Export name (ExportGlobal globalIdx)] }
+  state@Module { exportSec } <- getModule
+  putModule state { exportSec = exportSec ++ [Export name (ExportGlobal globalIdx)] }
 
-setStart :: FuncIdx -> Construct ()
+setStart :: MonadConstruct m => FuncIdx -> m ()
 setStart funcIdx = do
-  state <- get
-  put state { startSec = Just (Start funcIdx) }
+  state <- getModule
+  putModule state { startSec = Just (Start funcIdx) }
 
-putElem :: Expr -> Vec FuncIdx -> Construct ()
+putElem :: MonadConstruct m => Expr -> Vec FuncIdx -> m ()
 putElem expr funcIdxs = do
-  state@Module { elemSec } <- get
-  put state { elemSec = elemSec ++ [Elem expr funcIdxs] }
+  state@Module { elemSec } <- getModule
+  putModule state { elemSec = elemSec ++ [Elem expr funcIdxs] }
 
-putCode :: Code -> Construct ()
+putCode :: MonadConstruct m => Code -> m ()
 putCode code = do
-  state@Module { codeSec } <- get
-  put state { codeSec = codeSec ++ [code] }
+  state@Module { codeSec } <- getModule
+  putModule state { codeSec = codeSec ++ [code] }
 
-putData :: Name -> Expr -> Vec Word8 -> [RelocEntry] -> Construct (DataIdx, SymIdx)
+putData :: MonadConstruct m => Name -> Expr -> Vec Word8 -> [RelocEntry] -> m (DataIdx, SymIdx)
 putData name expr bytes entries = do
   state@Module
     { dataSec
@@ -422,7 +424,7 @@ putData name expr bytes entries = do
     , nextDataIdx
     , nextSymIdx
     }
-    <- get
+    <- getModule
   
   let
     flags = SymFlags
@@ -438,7 +440,7 @@ putData name expr bytes entries = do
     size = fromIntegral (length bytes)
     info = SymInfo (SYMTAB_DATA name nextDataIdx 0 size) flags
   
-  put state
+  putModule state
     { dataSec = dataSec ++ [Data expr bytes entries]
     , linkingSec = linkingSec ++ [info]
     , nextDataIdx = succ nextDataIdx
@@ -446,3 +448,19 @@ putData name expr bytes entries = do
     }
   
   return (nextDataIdx, nextSymIdx)
+
+newtype ConstructT m a =
+  ConstructT (StateT Module m a)
+  deriving (Functor, Applicative, Monad, MonadState Module)
+
+instance Monad m => MonadConstruct (ConstructT m) where
+  getModule = get
+  putModule = put
+
+runConstructT :: Monad m => ConstructT m a -> m Module
+runConstructT (ConstructT action) = execStateT action empty
+
+type Construct = ConstructT Identity
+
+runConstruct :: Construct a -> Module
+runConstruct action = runIdentity (runConstructT action)

@@ -572,14 +572,16 @@ emit :: Emit a -> Builder
 emit action = execWriter (execStateT action 0)
 
 tellSection :: Build a => a -> Emit ()
-tellSection value = let builder = build value in do
-  tell builder
+tellSection value = do
+  tell (build value)
 
   secIdx <- get
   put (succ secIdx)
 
 tellRelocSection :: RelocBuild a => String -> a -> Emit RelocSec
-tellRelocSection name value = let (builder, entries) = relocBuild value in do
+tellRelocSection name value = do
+  let (builder, entries) = relocBuild value
+
   tell builder
 
   secIdx <- get
