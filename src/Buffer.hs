@@ -1,3 +1,5 @@
+{-# LANGUAGE NamedFieldPuns #-}
+
 module Buffer
   ( Buffer (..)
   , byte

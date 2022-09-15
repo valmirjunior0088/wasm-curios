@@ -1,9 +1,12 @@
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE LambdaCase #-}
+
 module Serialize
   ( Serialize (..)
   , Build (..)
   , RelocSerialize (..)
   , RelocBuild (..)
-  , write
+  , writeModule
   )
   where
 
@@ -66,7 +69,7 @@ import Syntax.Instructions
   , Expr (..)
   )
 
-import Syntax.Sections
+import Syntax.Module
   ( magic
   , version
   , CustomSec (..)
@@ -108,6 +111,7 @@ import Syntax.Sections
   , dataSecId
   , DataCountSec (..)
   , dataCountSecId
+  , Module (..)
   )
 
 import Syntax.LLVM
@@ -122,7 +126,6 @@ import Syntax.LLVM
   , RelocSec (..)
   )
 
-import Syntax.Module (Module (..))
 import Data.Int (Int32)
 import Data.Word (Word8, Word32)
 import Data.ByteString.Lazy (writeFile)
@@ -188,13 +191,13 @@ instance Serialize SymIdx where
   serialize (SymIdx idx) = unsigned idx
 
 instance Serialize a => Serialize (Vec a) where
-  serialize (Vec values) = quantityBuffer <> valuesBuffer where
-    quantityBuffer = unsigned (fromIntegral $ length values :: Word32)
+  serialize (Vec values) = lengthBuffer <> valuesBuffer where
+    lengthBuffer = unsigned (fromIntegral $ length values :: Word32)
     valuesBuffer = mconcat (map serialize values)
 
 instance RelocSerialize a => RelocSerialize (Vec a) where
-  relocSerialize (Vec values) = relocEmpty quantityBuffer <> valuesBuffer where
-    quantityBuffer = unsigned (fromIntegral $ length values :: Word32)
+  relocSerialize (Vec values) = relocEmpty lengthBuffer <> valuesBuffer where
+    lengthBuffer = unsigned (fromIntegral $ length values :: Word32)
     valuesBuffer = mconcat (map relocSerialize values)
 
 instance Serialize Name where
@@ -558,28 +561,27 @@ instance Serialize RelocEntry where
     RelocEntry R_WASM_GLOBAL_INDEX_LEB offset symIdx ->
       byte 7 <> unsigned offset <> serialize symIdx
 
-    RelocEntry (R_WASM_FUNCTION_OFFSET_I32 addend) offset symIdx ->
-      byte 8 <> unsigned offset <> serialize symIdx <> signed addend
-
 instance Build RelocSec where
   build (RelocSec target secIdx entries) = build (CustomSec name bytes) where
     name = Name ("reloc." ++ target)
     bytes = bytesFrom (serialize secIdx <> serialize entries)
 
-type Emit = StateT SecIdx (Writer Builder)
+type ModuleBuilder = StateT SecIdx (Writer Builder)
 
-emit :: Emit a -> Builder
-emit action = execWriter (execStateT action 0)
+runModuleBuilder :: ModuleBuilder a -> Builder
+runModuleBuilder action = execWriter (execStateT action 0)
 
-tellSection :: Build a => a -> Emit ()
-tellSection value = do
-  tell (build value)
+tellSec :: Build a => a -> ModuleBuilder ()
+tellSec value = do
+  let builder = build value
+
+  tell builder
 
   secIdx <- get
   put (succ secIdx)
 
-tellRelocSection :: RelocBuild a => String -> a -> Emit RelocSec
-tellRelocSection name value = do
+tellRelocSec :: RelocBuild a => String -> a -> ModuleBuilder RelocSec
+tellRelocSec name value = do
   let (builder, entries) = relocBuild value
 
   tell builder
@@ -590,30 +592,30 @@ tellRelocSection name value = do
   return (RelocSec name secIdx $ Vec entries)
 
 instance Build Module where
-  build modl = emit $ do
+  build modl = runModuleBuilder $ do
     tell (stringUtf8 magic)
     tell (word32LE version)
 
-    tellSection (TypeSec $ Vec $ typeSec modl)
-    tellSection (ImportSec $ Vec $ importSec modl)
-    tellSection (FuncSec $ Vec $ funcSec modl)
-    tellSection (TableSec $ Vec $ tableSec modl)
-    tellSection (MemSec $ Vec $ memSec modl)
-    tellSection (GlobalSec $ Vec $ globalSec modl)
-    tellSection (ExportSec $ Vec $ exportSec modl)
+    tellSec (TypeSec $ Vec $ typeSec modl)
+    tellSec (ImportSec $ Vec $ importSec modl)
+    tellSec (FuncSec $ Vec $ funcSec modl)
+    tellSec (TableSec $ Vec $ tableSec modl)
+    tellSec (MemSec $ Vec $ memSec modl)
+    tellSec (GlobalSec $ Vec $ globalSec modl)
+    tellSec (ExportSec $ Vec $ exportSec modl)
 
     case startSec modl of
       Nothing -> return ()
-      Just start -> tellSection (StartSec start)
+      Just funcIdx -> tellSec (StartSec $ Start funcIdx)
 
-    tellSection (ElemSec $ Vec $ elemSec modl)
-    tellSection (DataCountSec $ fromIntegral $ length $ dataSec modl)
-    codeRelocSec <- tellRelocSection "CODE" (CodeSec $ Vec $ codeSec modl)
-    dataRelocSec <- tellRelocSection "DATA" (DataSec $ Vec $ dataSec modl)
+    tellSec (ElemSec $ Vec $ elemSec modl)
+    tellSec (DataCountSec $ fromIntegral $ length $ dataSec modl)
+    codeRelocSec <- tellRelocSec "CODE" (CodeSec $ Vec $ codeSec modl)
+    dataRelocSec <- tellRelocSec "DATA" (DataSec $ Vec $ dataSec modl)
 
-    tellSection (LinkingSec [WASM_SYMBOL_TABLE $ Vec $ linkingSec modl])
-    tellSection codeRelocSec
-    tellSection dataRelocSec
+    tellSec (LinkingSec [WASM_SYMBOL_TABLE $ Vec $ linkingSec modl])
+    tellSec codeRelocSec
+    tellSec dataRelocSec
 
-write :: FilePath -> Module -> IO ()
-write path modl = writeFile path (toLazyByteString $ build modl)
+writeModule :: FilePath -> Module -> IO ()
+writeModule path modl = writeFile path (toLazyByteString $ build modl)

@@ -1,0 +1,10 @@
+cradle:
+  stack:
+    - path: "./src"
+      component: "wasm-curios:lib"
+
+    - path: "./app/Main.hs"
+      component: "wasm-curios:exe:wasm-curios-exe"
+
+    - path: "./app/Paths_wasm_curios.hs"
+      component: "wasm-curios:exe:wasm-curios-exe"

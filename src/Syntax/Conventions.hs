@@ -65,8 +65,8 @@ newtype SymIdx =
 
 newtype Vec a =
   Vec [a]
-  deriving (Show, Semigroup, Monoid, Functor, Applicative, Foldable)
+  deriving (Show, Eq, Semigroup, Monoid, Functor, Applicative, Foldable)
 
 newtype Name =
   Name String
-  deriving (Show)
+  deriving (Show, Eq)

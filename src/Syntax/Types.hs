@@ -21,49 +21,49 @@ data NumType =
   I64 |
   F32 |
   F64
-  deriving (Show)
+  deriving (Show, Eq)
 
 data VecType =
   V128
-  deriving (Show)
+  deriving (Show, Eq)
 
 data RefType =
   FuncRef |
   ExternRef
-  deriving (Show)
+  deriving (Show, Eq)
 
 data ValType =
   ValNumType NumType |
   ValVecType VecType |
   ValRefType RefType
-  deriving (Show)
+  deriving (Show, Eq)
 
 data ResultType =
   ResultType (Vec ValType)
-  deriving (Show)
+  deriving (Show, Eq)
 
 data FuncType =
   FuncType ResultType ResultType
-  deriving (Show)
+  deriving (Show, Eq)
 
 data Limits =
   Unbounded Word32 |
   Bounded Word32 Word32
-  deriving (Show)
+  deriving (Show, Eq)
 
 data MemType =
   MemType Limits
-  deriving (Show)
+  deriving (Show, Eq)
 
 data TableType =
   TableType RefType Limits
-  deriving (Show)
+  deriving (Show, Eq)
 
 data Mut =
   Const |
   Var
-  deriving (Show)
+  deriving (Show, Eq)
 
 data GlobalType =
   GlobalType ValType Mut
-  deriving (Show)
+  deriving (Show, Eq)

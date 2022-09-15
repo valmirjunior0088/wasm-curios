@@ -25,6 +25,7 @@ source-repository head
 library
   exposed-modules:
       Buffer
+      Construct
       Encode.Ieee754
       Encode.Leb128
       Encode.Utf8
@@ -33,15 +34,11 @@ library
       Syntax.Instructions
       Syntax.LLVM
       Syntax.Module
-      Syntax.Sections
       Syntax.Types
   other-modules:
       Paths_wasm_curios
   hs-source-dirs:
       src
-  default-extensions:
-      NamedFieldPuns
-      LambdaCase
   build-depends:
       base >=4.7 && <5
     , bytestring >=0.10 && <1
@@ -54,9 +51,6 @@ executable wasm-curios-exe
       Paths_wasm_curios
   hs-source-dirs:
       app
-  default-extensions:
-      NamedFieldPuns
-      LambdaCase
   ghc-options: -threaded -rtsopts -with-rtsopts=-N
   build-depends:
       base >=4.7 && <5

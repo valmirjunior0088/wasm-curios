@@ -1,4 +1,5 @@
 {-# LANGUAGE BinaryLiterals #-}
+{-# LANGUAGE LambdaCase #-}
 
 module Encode.Leb128
   ( Uleb128

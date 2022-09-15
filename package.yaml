@@ -16,10 +16,6 @@ dependencies:
 - bytestring >= 0.10 && < 1
 - mtl >= 2.2 && < 3
 
-default-extensions:
-- NamedFieldPuns
-- LambdaCase
-
 library:
   source-dirs: src
 
