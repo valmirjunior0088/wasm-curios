@@ -64,7 +64,7 @@ data CustomSec =
 customSecId :: Word8
 customSecId = 0
 
-data TypeSec =
+newtype TypeSec =
   TypeSec (Vec FuncType)
   deriving (Show)
 
@@ -82,36 +82,36 @@ data Import =
   Import Name Name ImportDesc
   deriving (Show)
 
-data ImportSec =
+newtype ImportSec =
   ImportSec (Vec Import)
   deriving (Show)
 
 importSecId :: Word8
 importSecId = 2
 
-data FuncSec =
+newtype FuncSec =
   FuncSec (Vec TypeIdx)
   deriving (Show)
 
 funcSecId :: Word8
 funcSecId = 3
 
-data Table =
+newtype Table =
   Table TableType
   deriving (Show)
 
-data TableSec =
+newtype TableSec =
   TableSec (Vec Table)
   deriving (Show)
 
 tableSecId :: Word8
 tableSecId = 4
 
-data Mem =
+newtype Mem =
   Mem MemType
   deriving (Show)
 
-data MemSec =
+newtype MemSec =
   MemSec (Vec Mem)
   deriving (Show)
 
@@ -122,7 +122,7 @@ data Global =
   Global GlobalType Expr
   deriving (Show)
 
-data GlobalSec =
+newtype GlobalSec =
   GlobalSec (Vec Global)
   deriving (Show)
 
@@ -140,18 +140,18 @@ data Export =
   Export Name ExportDesc
   deriving (Show)
 
-data ExportSec =
+newtype ExportSec =
   ExportSec (Vec Export)
   deriving (Show)
 
 exportSecId :: Word8
 exportSecId = 7
 
-data Start =
+newtype Start =
   Start FuncIdx
   deriving (Show)
 
-data StartSec =
+newtype StartSec =
   StartSec Start
   deriving (Show)
 
@@ -162,7 +162,7 @@ data Elem =
   Elem Expr (Vec FuncIdx)
   deriving (Show)
 
-data ElemSec =
+newtype ElemSec =
   ElemSec (Vec Elem)
   deriving (Show)
 
@@ -177,11 +177,11 @@ data Func =
   Func (Vec Locals) Expr
   deriving (Show)
 
-data Code =
+newtype Code =
   Code Func
   deriving (Show)
 
-data CodeSec =
+newtype CodeSec =
   CodeSec (Vec Code)
   deriving (Show)
 
@@ -192,14 +192,14 @@ data Data =
   Data Expr (Vec Word8) [RelocEntry]
   deriving (Show)
 
-data DataSec =
+newtype DataSec =
   DataSec (Vec Data)
   deriving (Show)
 
 dataSecId :: Word8
 dataSecId = 11
 
-data DataCountSec =
+newtype DataCountSec =
   DataCountSec Word32
   deriving (Show)
 

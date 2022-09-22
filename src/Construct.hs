@@ -63,7 +63,7 @@ import Syntax.Module
 
 import Syntax.Instructions (Instr (..), Expr (..))
 import Syntax.LLVM (SymType (..), SymFlags (..), SymInfo (..))
-import Control.Monad (when)
+import Control.Monad (unless)
 import Control.Monad.Trans (MonadTrans, lift)
 import Control.Monad.State (StateT, evalStateT, execStateT, get, put)
 import Control.Monad.Identity (Identity, runIdentity)
@@ -141,7 +141,7 @@ importFunc namespace name inputType outputType = do
   idxs@Indexes { nextFuncIdx, nextSymIdx } <- getIdxs
   maps@Mappings { funcIdxs } <- getMaps
 
-  when (length funcSec > 0)
+  unless (null funcSec)
     (error "Can't import functions after having defined a function")
   
   let
@@ -169,7 +169,7 @@ importTable namespace name refType limits = do
   idxs@Indexes { nextTableIdx, nextSymIdx } <- getIdxs
   maps@Mappings { tableIdxs } <- getMaps
 
-  when (length tableSec > 0)
+  unless (null tableSec)
     (error "can't import tables after having declared a table")
   
   let
@@ -197,7 +197,7 @@ importMem namespace name limits = do
   idxs@Indexes { nextMemIdx } <- getIdxs
   maps@Mappings { memIdxs } <- getMaps
 
-  when (length memSec > 0)
+  unless (null memSec)
     (error "can't import memories after having declared a memory")
   
   let mem = Import (Name namespace) (Name name) (ImportMem (MemType limits))
@@ -212,7 +212,7 @@ importGlobal namespace name valType mut = do
   idxs@Indexes { nextGlobalIdx, nextSymIdx } <- getIdxs
   maps@Mappings { globalIdxs } <- getMaps
 
-  when (length globalSec > 0)
+  unless (null globalSec)
     (error "can't import globals after having declared a global")
   
   let
@@ -371,8 +371,7 @@ commitFuncRefs = do
   modl@Module { elemSec } <- getModl
   maps@Mappings { funcIdxs, funcRefs } <- getMaps
 
-  when (length elemSec > 0) (error "elem already committed")
-  when (length funcRefs > 0) (error "funcrefs already committed")
+  unless (null elemSec && null funcRefs) (error "funcrefs already committed")
 
   let
     funcRefElem =
@@ -396,11 +395,11 @@ instance MonadTrans ConstructT where
   lift action = ConstructT $ lift $ lift $ lift action
 
 instance Monad m => MonadConstruct (ConstructT m) where
-  getModl = ConstructT $ lift $ lift $ get
+  getModl = ConstructT $ lift $ lift get
   putModl modl = ConstructT $ lift $ lift $ put modl
-  getIdxs = ConstructT $ lift $ get
+  getIdxs = ConstructT $ lift get
   putIdxs idxs = ConstructT $ lift $ put idxs
-  getMaps = ConstructT $ get
+  getMaps = ConstructT get
   putMaps maps = ConstructT $ put maps
 
 type Construct = ConstructT Identity

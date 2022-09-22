@@ -40,11 +40,11 @@ data SymInfo =
   SymInfo SymType SymFlags
   deriving (Show)
 
-data LinkingSubsec =
+newtype LinkingSubsec =
   WASM_SYMBOL_TABLE (Vec SymInfo)
   deriving (Show)
 
-data LinkingSec =
+newtype LinkingSec =
   LinkingSec [LinkingSubsec]
   deriving (Show)
 

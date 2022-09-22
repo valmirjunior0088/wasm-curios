@@ -339,9 +339,9 @@ instance Serialize Instr where
 
     F64Const value -> byte 0x44 <> double value
 
-    I32FuncRef _ _ -> error "can't serialize raw func ref"
+    I32FuncRef {} -> error "can't serialize raw func ref"
 
-    I32DataRef _ _ _ -> error "can't serialize raw data ref"
+    I32DataRef {} -> error "can't serialize raw data ref"
 
 instance Serialize Expr where
   serialize (Expr instrs) = mconcat (map serialize instrs) <> byte 0x0B
@@ -507,7 +507,7 @@ instance Serialize SymInfo where
     SymInfo (SYMTAB_FUNCTION funcIdx maybeName) symFlags -> unsigned (0 :: Word32)
       <> serialize symFlags
       <> serialize funcIdx
-      <> case maybeName of Nothing -> mempty; Just name -> serialize name
+      <> maybe mempty serialize maybeName
 
     SymInfo (SYMTAB_DATA name dataIdx offset size) symFlags -> unsigned (1 :: Word32)
       <> serialize symFlags
@@ -519,12 +519,12 @@ instance Serialize SymInfo where
     SymInfo (SYMTAB_GLOBAL globalIdx maybeName) symFlags -> unsigned (2 :: Word32)
       <> serialize symFlags
       <> serialize globalIdx
-      <> case maybeName of Nothing -> mempty; Just name -> serialize name
+      <> maybe mempty serialize maybeName
       
     SymInfo (SYMTAB_TABLE tableIdx maybeName) symFlags -> unsigned (5 :: Word32)
       <> serialize symFlags
       <> serialize tableIdx
-      <> case maybeName of Nothing -> mempty; Just name -> serialize name
+      <> maybe mempty serialize maybeName
 
 instance Serialize LinkingSubsec where
   serialize = \case

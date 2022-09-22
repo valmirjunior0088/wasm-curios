@@ -55,6 +55,6 @@ data Instr =
   I32DataRef Int32 SymIdx Int32
   deriving (Show)
 
-data Expr =
+newtype Expr =
   Expr [Instr]
   deriving (Show)

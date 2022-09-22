@@ -38,7 +38,7 @@ data ValType =
   ValRefType RefType
   deriving (Show, Eq)
 
-data ResultType =
+newtype ResultType =
   ResultType (Vec ValType)
   deriving (Show, Eq)
 
@@ -51,7 +51,7 @@ data Limits =
   Bounded Word32 Word32
   deriving (Show, Eq)
 
-data MemType =
+newtype MemType =
   MemType Limits
   deriving (Show, Eq)
 

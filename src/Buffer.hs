@@ -71,7 +71,7 @@ addOffset offset (RelocEntry relocType offset' symIdx) =
   RelocEntry relocType (offset + offset') symIdx
 
 adjustOffsets :: Buffer -> [RelocEntry] -> [RelocEntry]
-adjustOffsets Buffer { size } entries = map (addOffset size) entries
+adjustOffsets Buffer { size } = map (addOffset size)
 
 instance Semigroup RelocBuffer where
   (<>) one other = RelocBuffer

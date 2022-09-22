@@ -36,7 +36,7 @@ shift7 value = shiftR value 7
 finish :: [Word8] -> [Word8]
 finish = \case
   [] -> []
-  byte : [] -> byte : []
+  [byte] -> [byte]
   byte : rest -> (byte .|. 0b10000000) : finish rest
 
 finishFixed :: Int -> [Word8] -> [Word8]
