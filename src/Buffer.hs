@@ -1,5 +1,3 @@
-{-# LANGUAGE NamedFieldPuns #-}
-
 module Buffer
   ( Buffer (..)
   , byte
@@ -26,16 +24,19 @@ import Data.ByteString.Lazy (unpack)
 import Data.ByteString.Builder (Builder, word8, word32LE, word64LE, toLazyByteString)
 import Data.Word (Word8, Word32)
 
-data Buffer = Buffer { size :: Word32, contents :: Builder }
+data Buffer = Buffer
+  { size :: Word32
+  , contents :: Builder
+  }
 
 instance Semigroup Buffer where
-  (<>) one other = Buffer
-    { size = size one + size other
-    , contents = contents one <> contents other
-    }
+  (<>) one other =
+    Buffer { size = size + size', contents = contents <> contents' } where
+      Buffer { size = size, contents = contents } = one
+      Buffer { size = size', contents = contents' } = other
 
 instance Monoid Buffer where
-  mempty = Buffer { size = 0 , contents = mempty }
+  mempty = Buffer { size = 0, contents = mempty }
 
 byte :: Word8 -> Buffer
 byte = Buffer 1 . word8
@@ -64,7 +65,10 @@ prependSize buffer@Buffer { size } = unsigned size <> buffer
 bytesFrom :: Buffer -> [Word8]
 bytesFrom Buffer { contents } = unpack (toLazyByteString contents)
 
-data RelocBuffer = RelocBuffer { target :: Buffer, relocs :: [RelocEntry] }
+data RelocBuffer = RelocBuffer
+  { target :: Buffer
+  , relocs :: [RelocEntry]
+  }
 
 addOffset :: Word32 -> RelocEntry -> RelocEntry
 addOffset offset (RelocEntry relocType offset' symIdx) =
@@ -74,10 +78,10 @@ adjustOffsets :: Buffer -> [RelocEntry] -> [RelocEntry]
 adjustOffsets Buffer { size } = map (addOffset size)
 
 instance Semigroup RelocBuffer where
-  (<>) one other = RelocBuffer
-    { target = target one <> target other
-    , relocs = relocs one ++ adjustOffsets (target one) (relocs other)
-    }
+  (<>) one other =
+    RelocBuffer { target = target <> target', relocs = relocs ++ adjustOffsets target relocs' } where
+      RelocBuffer { target = target, relocs = relocs } = one
+      RelocBuffer { target = target', relocs = relocs' } = other
 
 instance Monoid RelocBuffer where
   mempty = RelocBuffer { target = mempty, relocs = [] }

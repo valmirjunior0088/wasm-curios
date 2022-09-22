@@ -1,6 +1,3 @@
-{-# LANGUAGE NamedFieldPuns #-}
-{-# LANGUAGE LambdaCase #-}
-
 module Serialize
   ( Serialize (..)
   , Build (..)
@@ -10,7 +7,7 @@ module Serialize
   )
   where
 
-import Prelude hiding (id, writeFile)
+import Prelude hiding (writeFile)
 
 import Encode.Utf8 (utf8String)
 import Encode.Leb128 (uleb128)
@@ -132,6 +129,8 @@ import Data.ByteString.Lazy (writeFile)
 import Data.ByteString.Builder (Builder, word8, word32LE, stringUtf8, toLazyByteString)
 import Control.Monad.Writer (Writer, execWriter, tell)
 import Control.Monad.State (StateT, execStateT, get, put)
+import Data.Generics.Product (the)
+import Control.Lens ((^.))
 
 class Serialize a where
   serialize :: a -> Buffer
@@ -140,9 +139,10 @@ class Build a where
   build :: a -> Builder
 
 section :: Word8 -> Buffer -> Builder
-section id Buffer { size, contents } = idBuilder <> sizeBuilder <> contents where
-  idBuilder = word8 id
-  sizeBuilder = mconcat (map word8 (uleb128 size))
+section identifier Buffer { size, contents } = 
+  identifierBuilder <> sizeBuilder <> contents where
+    identifierBuilder = word8 identifier
+    sizeBuilder = mconcat (map word8 (uleb128 size))
 
 class RelocSerialize a where
   relocSerialize :: a -> RelocBuffer
@@ -151,8 +151,8 @@ class RelocBuild a where
   relocBuild :: a -> (Builder, [RelocEntry])
 
 relocSection :: Word8 -> RelocBuffer -> (Builder, [RelocEntry])
-relocSection id RelocBuffer { target, relocs } =
-  (section id target, relocs)
+relocSection identifier RelocBuffer { target, relocs } =
+  (section identifier target, relocs)
 
 instance Serialize Word8 where
   serialize = byte
@@ -493,13 +493,13 @@ pack = sum . map go where
 
 instance Serialize SymFlags where
   serialize flags = unsigned $ pack
-    [ (0x01, wasm_sym_binding_weak flags)
-    , (0x02, wasm_sym_binding_local flags)
-    , (0x04, wasm_sym_visibility_hidden flags)
-    , (0x10, wasm_sym_undefined flags)
-    , (0x20, wasm_sym_exported flags)
-    , (0x40, wasm_sym_explicit_name flags)
-    , (0x80, wasm_sym_no_strip flags)
+    [ (0x01, flags ^. the @"wasm_sym_binding_weak")
+    , (0x02, flags ^. the @"wasm_sym_binding_local")
+    , (0x04, flags ^. the @"wasm_sym_visibility_hidden")
+    , (0x10, flags ^. the @"wasm_sym_undefined")
+    , (0x20, flags ^. the @"wasm_sym_exported")
+    , (0x40, flags ^. the @"wasm_sym_explicit_name")
+    , (0x80, flags ^. the @"wasm_sym_no_strip")
     ]
 
 instance Serialize SymInfo where
@@ -596,24 +596,24 @@ instance Build Module where
     tell (stringUtf8 magic)
     tell (word32LE version)
 
-    tellSec (TypeSec $ Vec $ typeSec modl)
-    tellSec (ImportSec $ Vec $ importSec modl)
-    tellSec (FuncSec $ Vec $ funcSec modl)
-    tellSec (TableSec $ Vec $ tableSec modl)
-    tellSec (MemSec $ Vec $ memSec modl)
-    tellSec (GlobalSec $ Vec $ globalSec modl)
-    tellSec (ExportSec $ Vec $ exportSec modl)
+    tellSec (TypeSec $ Vec $ modl ^. the @"typeSec")
+    tellSec (ImportSec $ Vec $ modl ^. the @"importSec")
+    tellSec (FuncSec $ Vec $ modl ^. the @"funcSec")
+    tellSec (TableSec $ Vec $ modl ^. the @"tableSec")
+    tellSec (MemSec $ Vec $ modl ^. the @"memSec")
+    tellSec (GlobalSec $ Vec $ modl ^. the @"globalSec")
+    tellSec (ExportSec $ Vec $ modl ^. the @"exportSec")
 
-    case startSec modl of
+    case modl ^. the @"startSec" of
       Nothing -> return ()
       Just funcIdx -> tellSec (StartSec $ Start funcIdx)
 
-    tellSec (ElemSec $ Vec $ elemSec modl)
-    tellSec (DataCountSec $ fromIntegral $ length $ dataSec modl)
-    codeRelocSec <- tellRelocSec "CODE" (CodeSec $ Vec $ codeSec modl)
-    dataRelocSec <- tellRelocSec "DATA" (DataSec $ Vec $ dataSec modl)
+    tellSec (ElemSec $ Vec $ modl ^. the @"elemSec")
+    tellSec (DataCountSec $ fromIntegral $ length $ modl ^. the @"dataSec")
+    codeRelocSec <- tellRelocSec "CODE" (CodeSec $ Vec $ modl ^. the @"codeSec")
+    dataRelocSec <- tellRelocSec "DATA" (DataSec $ Vec $ modl ^. the @"dataSec")
 
-    tellSec (LinkingSec [WASM_SYMBOL_TABLE $ Vec $ linkingSec modl])
+    tellSec (LinkingSec [WASM_SYMBOL_TABLE $ Vec $ modl ^. the @"linkingSec"])
     tellSec codeRelocSec
     tellSec dataRelocSec
 

@@ -1,5 +1,3 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-
 module Syntax.Conventions
   ( TypeIdx (..)
   , FuncIdx (..)

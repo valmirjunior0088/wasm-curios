@@ -50,6 +50,7 @@ import Syntax.Types (ValType, FuncType, TableType, MemType, GlobalType)
 import Syntax.Instructions (Expr)
 import Syntax.LLVM (RelocEntry, SymInfo)
 import Data.Word (Word8, Word32)
+import GHC.Generics (Generic)
 
 magic :: String
 magic = "\0asm"
@@ -220,6 +221,7 @@ data Module = Module
   , dataSec :: [Data]
   , linkingSec :: [SymInfo]
   }
+  deriving (Show, Generic)
 
 emptyModule :: Module
 emptyModule = Module

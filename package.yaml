@@ -13,8 +13,25 @@ description: Please see the README on GitHub at <https://github.com/valmirjunior
 
 dependencies:
 - base >= 4.7 && < 5
-- bytestring >= 0.10 && < 1
 - mtl >= 2.2 && < 3
+- bytestring >= 0.10 && < 1
+
+# Lens specific dependencies
+- lens >= 5.0 && < 6
+- generic-lens >= 2.2 && < 3
+
+default-extensions:
+- LambdaCase
+- NamedFieldPuns
+- NoFieldSelectors
+- DuplicateRecordFields
+- FlexibleContexts
+- GeneralizedNewtypeDeriving
+
+# Lens specific extensions
+- DeriveGeneric
+- DataKinds
+- TypeApplications
 
 library:
   source-dirs: src

@@ -1,9 +1,7 @@
-{-# LANGUAGE GeneralizedNewtypeDeriving #-}
-{-# LANGUAGE NamedFieldPuns #-}
 {-# LANGUAGE ParallelListComp #-}
 
 module Construct
-  ( MonadConstruct (..)
+  ( MonadConstruct
   , importFunc
   , importTable
   , importMem
@@ -63,45 +61,42 @@ import Syntax.Module
 
 import Syntax.Instructions (Instr (..), Expr (..))
 import Syntax.LLVM (SymType (..), SymFlags (..), SymInfo (..))
+import Util (push)
 import Control.Monad (unless)
-import Control.Monad.Trans (MonadTrans, lift)
-import Control.Monad.State (StateT, evalStateT, execStateT, get, put)
+import Control.Monad.State (MonadState (..), StateT, evalStateT)
 import Control.Monad.Identity (Identity, runIdentity)
 import Data.Int (Int32)
+import GHC.Generics (Generic)
+import Data.Generics.Product (the)
+import Control.Lens (use, (.=), (%=))
 
-data Indexes = Indexes
+data ModlState = ModlState
   { nextTypeIdx :: TypeIdx
   , nextFuncIdx :: FuncIdx
   , nextTableIdx :: TableIdx
   , nextMemIdx :: MemIdx
   , nextGlobalIdx :: GlobalIdx
   , nextSymIdx :: SymIdx
-  }
-  deriving (Show)
 
-emptyIndexes :: Indexes
-emptyIndexes = Indexes
+  , typeIdxs :: [(FuncType, TypeIdx)]
+  , funcIdxs :: [(String, (FuncIdx, SymIdx))]
+  , tableIdxs :: [(String, (TableIdx, SymIdx))]
+  , memIdxs :: [(String, MemIdx)]
+  , globalIdxs :: [(String, (GlobalIdx, SymIdx))]
+  , funcRefs :: [(String, (Int32, SymIdx))] 
+  }
+  deriving (Show, Generic)
+
+emptyModlState :: ModlState
+emptyModlState = ModlState
   { nextTypeIdx = 0
   , nextFuncIdx = 0
   , nextTableIdx = 0
   , nextMemIdx = 0
   , nextGlobalIdx = 0
   , nextSymIdx = 0
-  }
 
-data Mappings = Mappings
-  { typeIdxs :: [(FuncType, TypeIdx)]
-  , funcIdxs :: [(String, (FuncIdx, SymIdx))]
-  , tableIdxs :: [(String, (TableIdx, SymIdx))]
-  , memIdxs :: [(String, MemIdx)]
-  , globalIdxs :: [(String, (GlobalIdx, SymIdx))]
-  , funcRefs :: [(String, (Int32, SymIdx))]
-  }
-  deriving (Show)
-
-emptyMappings :: Mappings
-emptyMappings = Mappings
-  { typeIdxs = []
+  , typeIdxs = []
   , funcIdxs = []
   , tableIdxs = []
   , memIdxs = []
@@ -109,41 +104,52 @@ emptyMappings = Mappings
   , funcRefs = []
   }
 
-class Monad m => MonadConstruct m where
-  getModl :: m Module
-  putModl :: Module -> m ()
-  getIdxs :: m Indexes
-  putIdxs :: Indexes -> m ()
-  getMaps :: m Mappings
-  putMaps :: Mappings -> m ()
+data ConstructState = ConstructState
+  { modl :: Module
+  , modlState :: ModlState
+  }
+  deriving (Show, Generic)
+
+emptyState :: ConstructState
+emptyState = ConstructState 
+  { modl = emptyModule
+  , modlState = emptyModlState
+  }
+
+class MonadState ConstructState m => MonadConstruct m
 
 getType :: MonadConstruct m => FuncType -> m TypeIdx
 getType funcType = do
-  modl@Module { typeSec } <- getModl
-  idxs@Indexes { nextTypeIdx } <- getIdxs
-  maps@Mappings { typeIdxs } <- getMaps
+  typeIdxs <- use (the @"modlState" . the @"typeIdxs")
 
   case lookup funcType typeIdxs of
     Nothing -> do
-      putModl modl { typeSec = typeSec ++ [funcType] }
-      putIdxs idxs { nextTypeIdx = succ nextTypeIdx }
-      putMaps maps { typeIdxs = typeIdxs ++ [(funcType, nextTypeIdx)] }
-      return nextTypeIdx
+      typeIdx <- use (the @"modlState" . the @"nextTypeIdx")
+      (the @"modlState" . the @"nextTypeIdx") .= succ typeIdx
+
+      (the @"modl" . the @"typeSec") %= push funcType
+      (the @"modlState" . the @"typeIdxs") %= push (funcType, typeIdx)
+
+      return typeIdx
     
     Just typeIdx ->
       return typeIdx
 
 importFunc :: MonadConstruct m => String -> String -> [ValType] -> [ValType] -> m ()
 importFunc namespace name inputType outputType = do
-  typeIdx <- getType (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
-
-  modl@Module { importSec, funcSec, linkingSec } <- getModl
-  idxs@Indexes { nextFuncIdx, nextSymIdx } <- getIdxs
-  maps@Mappings { funcIdxs } <- getMaps
+  funcSec <- use (the @"modl" . the @"funcSec")
 
   unless (null funcSec)
-    (error "Can't import functions after having defined a function")
-  
+    (error "cannot import func after having declared a func")
+
+  typeIdx <- getType (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
+
+  funcIdx <- use (the @"modlState" . the @"nextFuncIdx")
+  (the @"modlState" . the @"nextFuncIdx") .= succ funcIdx
+
+  symIdx <- use (the @"modlState" . the @"nextSymIdx")
+  (the @"modlState" . the @"nextSymIdx") .= succ symIdx
+
   let
     func = Import (Name namespace) (Name name) (ImportFunc typeIdx)
 
@@ -157,21 +163,25 @@ importFunc namespace name inputType outputType = do
       , wasm_sym_no_strip = False
       }
     
-    info = SymInfo (SYMTAB_FUNCTION nextFuncIdx Nothing) flags
+    info = SymInfo (SYMTAB_FUNCTION funcIdx Nothing) flags
   
-  putModl modl { importSec = importSec ++ [func], linkingSec = linkingSec ++ [info] }
-  putIdxs idxs { nextFuncIdx = succ nextFuncIdx, nextSymIdx = succ nextSymIdx }
-  putMaps maps { funcIdxs = funcIdxs ++ [(name, (nextFuncIdx, nextSymIdx))] }
+  (the @"modl" . the @"importSec") %= push func
+  (the @"modl" . the @"linkingSec") %= push info
+  (the @"modlState" . the @"funcIdxs") %= push (name, (funcIdx, symIdx))
 
 importTable :: MonadConstruct m => String -> String -> RefType -> Limits -> m ()
 importTable namespace name refType limits = do
-  modl@Module { importSec, tableSec, linkingSec } <- getModl
-  idxs@Indexes { nextTableIdx, nextSymIdx } <- getIdxs
-  maps@Mappings { tableIdxs } <- getMaps
+  tableSec <- use (the @"modl" . the @"tableSec")
 
   unless (null tableSec)
-    (error "can't import tables after having declared a table")
-  
+    (error "cannot import a table after having declared a table")
+
+  tableIdx <- use (the @"modlState" . the @"nextTableIdx")
+  (the @"modlState" . the @"nextTableIdx") .= succ tableIdx
+
+  symIdx <- use (the @"modlState" . the @"nextSymIdx")
+  (the @"modlState" . the @"nextSymIdx") .= succ symIdx
+
   let
     table = Import (Name namespace) (Name name) (ImportTable (TableType refType limits))
 
@@ -185,36 +195,40 @@ importTable namespace name refType limits = do
       , wasm_sym_no_strip = False
       }
     
-    info = SymInfo (SYMTAB_TABLE nextTableIdx Nothing) flags
-
-  putModl modl { importSec = importSec ++ [table], linkingSec = linkingSec ++ [info] }
-  putIdxs idxs { nextTableIdx = succ nextTableIdx, nextSymIdx = succ nextSymIdx }
-  putMaps maps { tableIdxs = tableIdxs ++ [(name, (nextTableIdx, nextSymIdx))] }
+    info = SymInfo (SYMTAB_TABLE tableIdx Nothing) flags
+  
+  (the @"modl" . the @"importSec") %= push table
+  (the @"modl" . the @"linkingSec") %= push info
+  (the @"modlState" . the @"tableIdxs") %= push (name, (tableIdx, symIdx))
 
 importMem :: MonadConstruct m => String -> String -> Limits -> m ()
 importMem namespace name limits = do
-  modl@Module { importSec, memSec } <- getModl
-  idxs@Indexes { nextMemIdx } <- getIdxs
-  maps@Mappings { memIdxs } <- getMaps
+  memSec <- use (the @"modl" . the @"memSec")
 
   unless (null memSec)
-    (error "can't import memories after having declared a memory")
-  
-  let mem = Import (Name namespace) (Name name) (ImportMem (MemType limits))
+    (error "cannot import a mem after having declared a mem")
 
-  putModl modl { importSec = importSec ++ [mem] }
-  putIdxs idxs { nextMemIdx = succ nextMemIdx }
-  putMaps maps { memIdxs = memIdxs ++ [(name, nextMemIdx)] }
+  memIdx <- use (the @"modlState" . the @"nextMemIdx")
+  (the @"modlState" . the @"nextMemIdx") .= succ memIdx
+
+  let mem = Import (Name namespace) (Name name) (ImportMem (MemType limits))
+  
+  (the @"modl" . the @"importSec") %= push mem
+  (the @"modlState" . the @"memIdxs") %= push (name, memIdx)
 
 importGlobal :: MonadConstruct m => String -> String -> ValType -> Mut -> m ()
 importGlobal namespace name valType mut = do
-  modl@Module { importSec, globalSec, linkingSec } <- getModl
-  idxs@Indexes { nextGlobalIdx, nextSymIdx } <- getIdxs
-  maps@Mappings { globalIdxs } <- getMaps
+  globalSec <- use (the @"modl" . the @"globalSec")
 
   unless (null globalSec)
-    (error "can't import globals after having declared a global")
-  
+    (error "cannot import a global after having declared a global")
+
+  globalIdx <- use (the @"modlState" . the @"nextGlobalIdx")
+  (the @"modlState" . the @"nextGlobalIdx") .= succ globalIdx
+
+  symIdx <- use (the @"modlState" . the @"nextSymIdx")
+  (the @"modlState" . the @"nextSymIdx") .= succ symIdx
+
   let
     global = Import (Name namespace) (Name name) (ImportGlobal (GlobalType valType mut))
 
@@ -228,19 +242,21 @@ importGlobal namespace name valType mut = do
       , wasm_sym_no_strip = False
       }
     
-    info = SymInfo (SYMTAB_GLOBAL nextGlobalIdx Nothing) flags
+    info = SymInfo (SYMTAB_GLOBAL globalIdx Nothing) flags
   
-  putModl modl { importSec = importSec ++ [global], linkingSec = linkingSec ++ [info] }
-  putIdxs idxs { nextGlobalIdx = succ nextGlobalIdx, nextSymIdx = succ nextSymIdx }
-  putMaps maps { globalIdxs = globalIdxs ++ [(name, (nextGlobalIdx, nextSymIdx))] }
+  (the @"modl" . the @"importSec") %= push global
+  (the @"modl" . the @"linkingSec") %= push info
+  (the @"modlState" . the @"globalIdxs") %= push (name, (globalIdx, symIdx))
 
 declareFunc :: MonadConstruct m => String -> [ValType] -> [ValType] -> m ()
 declareFunc name inputType outputType = do
   typeIdx <- getType (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
 
-  modl@Module { funcSec, linkingSec } <- getModl
-  idxs@Indexes { nextFuncIdx, nextSymIdx } <- getIdxs
-  maps@Mappings { funcIdxs } <- getMaps
+  funcIdx <- use (the @"modlState" . the @"nextFuncIdx")
+  (the @"modlState" . the @"nextFuncIdx") .= succ funcIdx
+
+  symIdx <- use (the @"modlState" . the @"nextSymIdx")
+  (the @"modlState" . the @"nextSymIdx") .= succ symIdx
 
   let
     flags = SymFlags
@@ -253,17 +269,19 @@ declareFunc name inputType outputType = do
       , wasm_sym_no_strip = False
       }
 
-    info = SymInfo (SYMTAB_FUNCTION nextFuncIdx (Just (Name name))) flags
+    info = SymInfo (SYMTAB_FUNCTION funcIdx (Just (Name name))) flags
   
-  putModl modl { funcSec = funcSec ++ [typeIdx], linkingSec = linkingSec ++ [info] }
-  putIdxs idxs { nextFuncIdx = succ nextFuncIdx, nextSymIdx = succ nextSymIdx }
-  putMaps maps { funcIdxs = funcIdxs ++ [(name, (nextFuncIdx, nextSymIdx))] }
+  (the @"modl" . the @"funcSec") %= push typeIdx
+  (the @"modl" . the @"linkingSec") %= push info
+  (the @"modlState" . the @"funcIdxs") %= push (name, (funcIdx, symIdx))
 
 declareTable :: MonadConstruct m => String -> RefType -> Limits -> m ()
 declareTable name refType limits = do
-  modl@Module { tableSec, linkingSec } <- getModl
-  idxs@Indexes { nextTableIdx, nextSymIdx } <- getIdxs
-  maps@Mappings { tableIdxs } <- getMaps
+  tableIdx <- use (the @"modlState" . the @"nextTableIdx")
+  (the @"modlState" . the @"nextTableIdx") .= succ tableIdx
+
+  symIdx <- use (the @"modlState" . the @"nextSymIdx")
+  (the @"modlState" . the @"nextSymIdx") .= succ symIdx
 
   let
     table = Table (TableType refType limits)
@@ -278,29 +296,29 @@ declareTable name refType limits = do
       , wasm_sym_no_strip = False
       }
     
-    info = SymInfo (SYMTAB_TABLE nextTableIdx (Just (Name name))) flags
+    info = SymInfo (SYMTAB_TABLE tableIdx (Just (Name name))) flags
   
-  putModl modl { tableSec = tableSec ++ [table], linkingSec = linkingSec ++ [info] }
-  putIdxs idxs { nextTableIdx = succ nextTableIdx, nextSymIdx = succ nextSymIdx }
-  putMaps maps { tableIdxs = tableIdxs ++ [(name, (nextTableIdx, nextSymIdx))] }
+  (the @"modl" . the @"tableSec") %= push table
+  (the @"modl" . the @"linkingSec") %= push info
+  (the @"modlState" . the @"tableIdxs") %= push (name, (tableIdx, symIdx))
 
 declareMem :: MonadConstruct m => String -> Limits -> m ()
 declareMem name limits = do
-  modl@Module { memSec } <- getModl
-  idxs@Indexes { nextMemIdx } <- getIdxs
-  maps@Mappings { memIdxs } <- getMaps
+  memIdx <- use (the @"modlState" . the @"nextMemIdx")
+  (the @"modlState" . the @"nextMemIdx") .= succ memIdx
 
   let mem = Mem (MemType limits)
 
-  putModl modl { memSec = memSec ++ [mem] }
-  putIdxs idxs { nextMemIdx = succ nextMemIdx }
-  putMaps maps { memIdxs = memIdxs ++ [(name, nextMemIdx)] }
+  (the @"modl" . the @"memSec") %= push mem
+  (the @"modlState" . the @"memIdxs") %= push (name, memIdx)
 
 declareGlobal :: MonadConstruct m => String -> ValType -> Mut -> Expr -> m ()
 declareGlobal name valType mut expr = do
-  modl@Module { globalSec, linkingSec } <- getModl
-  idxs@Indexes { nextGlobalIdx, nextSymIdx } <- getIdxs
-  maps@Mappings { globalIdxs } <- getMaps
+  globalIdx <- use (the @"modlState" . the @"nextGlobalIdx")
+  (the @"modlState" . the @"nextGlobalIdx") .= succ globalIdx
+
+  symIdx <- use (the @"modlState" . the @"nextSymIdx")
+  (the @"modlState" . the @"nextSymIdx") .= succ symIdx
 
   let
     global = Global (GlobalType valType mut) expr
@@ -315,92 +333,92 @@ declareGlobal name valType mut expr = do
       , wasm_sym_no_strip = False
       }
     
-    info = SymInfo (SYMTAB_GLOBAL nextGlobalIdx (Just (Name name))) flags
+    info = SymInfo (SYMTAB_GLOBAL globalIdx (Just (Name name))) flags
   
-  putModl modl { globalSec = globalSec ++ [global], linkingSec = linkingSec ++ [info] }
-  putIdxs idxs { nextGlobalIdx = succ nextGlobalIdx, nextSymIdx = succ nextSymIdx }
-  putMaps maps { globalIdxs = globalIdxs ++ [(name, (nextGlobalIdx, nextSymIdx))] }
+  (the @"modl" . the @"globalSec") %= push global
+  (the @"modl" . the @"linkingSec") %= push info
+  (the @"modlState" . the @"globalIdxs") %= push (name, (globalIdx, symIdx))
 
 exportFunc :: MonadConstruct m => String -> m ()
 exportFunc name = do
-  modl@Module { exportSec } <- getModl
-  Mappings { funcIdxs } <- getMaps
+  funcIdxs <- use (the @"modlState" . the @"funcIdxs")
 
   case lookup name funcIdxs of
-    Nothing -> error ("tried to export unknown function \"" ++ name ++ "\"")
-    Just (funcIdx, _) -> putModl modl { exportSec = exportSec ++ [Export (Name name) (ExportFunc funcIdx)] }
+    Nothing ->
+      error ("tried to export unknown function \"" ++ name ++ "\"")
+
+    Just (funcIdx, _) ->
+      (the @"modl" . the @"exportSec") %= push (Export (Name name) (ExportFunc funcIdx))
 
 exportTable :: MonadConstruct m => String -> m ()
 exportTable name = do
-  modl@Module { exportSec } <- getModl
-  Mappings { tableIdxs } <- getMaps
+  tableIdxs <- use (the @"modlState" . the @"tableIdxs")
 
   case lookup name tableIdxs of
-    Nothing -> error ("tried to export unknown table \"" ++ name ++ "\"")
-    Just (tableIdx, _) -> putModl modl { exportSec = exportSec ++ [Export (Name name) (ExportTable tableIdx)] }
+    Nothing ->
+      error ("tried to export unknown table \"" ++ name ++ "\"")
+
+    Just (tableIdx, _) ->
+      (the @"modl" . the @"exportSec") %= push (Export (Name name) (ExportTable tableIdx))
 
 exportMem :: MonadConstruct m => String -> m ()
 exportMem name = do
-  modl@Module { exportSec } <- getModl
-  Mappings { memIdxs } <- getMaps
+  memIdxs <- use (the @"modlState" . the @"memIdxs")
 
   case lookup name memIdxs of
-    Nothing -> error ("tried to export unknown memory \"" ++ name ++ "\"")
-    Just memIdx -> putModl modl { exportSec = exportSec ++ [Export (Name name) (ExportMem memIdx)] }
+    Nothing ->
+      error ("tried to export unknown memory \"" ++ name ++ "\"")
+
+    Just memIdx ->
+      (the @"modl" . the @"exportSec") %= push (Export (Name name) (ExportMem memIdx))
 
 exportGlobal :: MonadConstruct m => String -> m ()
 exportGlobal name = do
-  modl@Module { exportSec } <- getModl
-  Mappings { globalIdxs } <- getMaps
+  globalIdxs <- use (the @"modlState" . the @"globalIdxs")
 
   case lookup name globalIdxs of
-    Nothing -> error ("tried to export unknown global \"" ++ name ++ "\"")
-    Just (globalIdx, _) -> putModl modl { exportSec = exportSec ++ [Export (Name name) (ExportGlobal globalIdx)] }
+    Nothing ->
+      error ("tried to export unknown global \"" ++ name ++ "\"")
+
+    Just (globalIdx, _) ->
+      (the @"modl" . the @"exportSec") %= push (Export (Name name) (ExportGlobal globalIdx))
 
 setStart :: MonadConstruct m => String -> m ()
 setStart name = do
-  modl <- getModl
-  Mappings { funcIdxs } <- getMaps
+  funcIdxs <- use (the @"modlState" . the @"funcIdxs")
 
   case lookup name funcIdxs of
-    Nothing -> error ("tried to set unknown function \"" ++ name ++ "\" as start")
-    Just (funcIdx, _) -> putModl modl { startSec = Just funcIdx }
+    Nothing ->
+      error ("tried to set unknown function \"" ++ name ++ "\" as start")
+
+    Just (funcIdx, _) ->
+      (the @"modl" . the @"startSec") .= Just funcIdx
 
 commitFuncRefs :: MonadConstruct m => m ()
 commitFuncRefs = do
-  modl@Module { elemSec } <- getModl
-  maps@Mappings { funcIdxs, funcRefs } <- getMaps
+  elemSec <- use (the @"modl" . the @"elemSec")
+  funcRefs <- use (the @"modlState" . the @"funcRefs")
 
-  unless (null elemSec && null funcRefs) (error "funcrefs already committed")
+  unless (null elemSec && null funcRefs)
+    (error "funcrefs are already committed and it is not possible to update them")
 
-  let
-    funcRefElem =
-      Elem (Expr [I32Const 1]) (Vec [funcIdx | (_, (funcIdx, _)) <- funcIdxs])
+  funcIdxs <- use (the @"modlState" . the @"funcIdxs")
 
-    funcRefMapping =
-      [(name, (funcRef, symIdx)) | (name, (_, symIdx)) <- funcIdxs | funcRef <- [1..]]
+  (the @"modl" . the @"elemSec") .=
+    [Elem (Expr [I32Const 1]) (Vec [funcIdx | (_, (funcIdx, _)) <- funcIdxs])]
 
-  putModl modl { elemSec = [funcRefElem] }
-  putMaps maps { funcRefs = funcRefMapping }
+  (the @"modlState" . the @"funcRefs") .=
+    [(name, (funcRef, symIdx)) | (name, (_, symIdx)) <- funcIdxs | funcRef <- [1..]]
 
 newtype ConstructT m a =
-  ConstructT (StateT Mappings (StateT Indexes (StateT Module m)) a)
-  deriving (Functor, Applicative, Monad)
+  ConstructT (StateT ConstructState m a)
+  deriving (Functor, Applicative, Monad, MonadState ConstructState)
+
+instance Monad m => MonadConstruct (ConstructT m)
 
 runConstructT :: Monad m => ConstructT m a -> m Module
 runConstructT (ConstructT action) =
-  execStateT (evalStateT (evalStateT action emptyMappings) emptyIndexes) emptyModule
-
-instance MonadTrans ConstructT where
-  lift action = ConstructT $ lift $ lift $ lift action
-
-instance Monad m => MonadConstruct (ConstructT m) where
-  getModl = ConstructT $ lift $ lift get
-  putModl modl = ConstructT $ lift $ lift $ put modl
-  getIdxs = ConstructT $ lift get
-  putIdxs idxs = ConstructT $ lift $ put idxs
-  getMaps = ConstructT get
-  putMaps maps = ConstructT $ put maps
+  evalStateT (action >> use (the @"modl")) emptyState
 
 type Construct = ConstructT Identity
 

@@ -14,6 +14,7 @@ module Syntax.LLVM
 import Syntax.Conventions (FuncIdx, DataIdx, GlobalIdx, TableIdx, SecIdx, SymIdx, Vec, Name)
 import Data.Int (Int32)
 import Data.Word (Word32)
+import GHC.Generics (Generic)
 
 linkingVersion :: Word32
 linkingVersion = 2
@@ -34,7 +35,7 @@ data SymFlags = SymFlags
   , wasm_sym_explicit_name :: Bool
   , wasm_sym_no_strip :: Bool
   }
-  deriving (Show)
+  deriving (Show, Generic)
 
 data SymInfo =
   SymInfo SymType SymFlags
