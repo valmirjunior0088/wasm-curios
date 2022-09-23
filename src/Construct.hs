@@ -265,7 +265,7 @@ declareFunc name inputType outputType = do
       , wasm_sym_visibility_hidden = False
       , wasm_sym_undefined = False
       , wasm_sym_exported = False
-      , wasm_sym_explicit_name = False
+      , wasm_sym_explicit_name = True
       , wasm_sym_no_strip = False
       }
 
@@ -292,7 +292,7 @@ declareTable name refType limits = do
       , wasm_sym_visibility_hidden = False
       , wasm_sym_undefined = False
       , wasm_sym_exported = False
-      , wasm_sym_explicit_name = False
+      , wasm_sym_explicit_name = True
       , wasm_sym_no_strip = False
       }
     
@@ -329,7 +329,7 @@ declareGlobal name valType mut expr = do
       , wasm_sym_visibility_hidden = False
       , wasm_sym_undefined = False
       , wasm_sym_exported = False
-      , wasm_sym_explicit_name = False
+      , wasm_sym_explicit_name = True
       , wasm_sym_no_strip = False
       }
     
