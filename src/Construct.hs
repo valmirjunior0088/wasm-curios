@@ -1,5 +1,3 @@
-{-# LANGUAGE ParallelListComp #-}
-
 module Construct
   ( Construct
   , runConstruct

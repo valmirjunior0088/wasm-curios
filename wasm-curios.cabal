@@ -41,6 +41,7 @@ library
       src
   default-extensions:
       LambdaCase
+      ParallelListComp
       NamedFieldPuns
       NoFieldSelectors
       DuplicateRecordFields
@@ -65,6 +66,7 @@ executable wasm-curios-exe
       app
   default-extensions:
       LambdaCase
+      ParallelListComp
       NamedFieldPuns
       NoFieldSelectors
       DuplicateRecordFields
