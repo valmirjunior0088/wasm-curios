@@ -1,7 +1,8 @@
 {-# LANGUAGE ParallelListComp #-}
 
 module Construct
-  ( MonadConstruct
+  ( Construct
+  , runConstruct
   , importFunc
   , importTable
   , importMem
@@ -16,10 +17,6 @@ module Construct
   , exportGlobal
   , setStart
   , commitFuncRefs
-  , ConstructT
-  , runConstructT
-  , Construct
-  , runConstruct
   )
   where
 
@@ -62,8 +59,7 @@ import Syntax.Module
 import Syntax.Instructions (Instr (..), Expr (..))
 import Syntax.LLVM (SymType (..), SymFlags (..), SymInfo (..))
 import Control.Monad (unless)
-import Control.Monad.State (MonadState (..), StateT, evalStateT)
-import Control.Monad.Identity (Identity, runIdentity)
+import Control.Monad.State (State, evalState)
 import Data.Int (Int32)
 import GHC.Generics (Generic)
 import Data.Generics.Product (the)
@@ -115,9 +111,12 @@ emptyState = ConstructState
   , modlState = emptyModlState
   }
 
-class MonadState ConstructState m => MonadConstruct m
+type Construct = State ConstructState
 
-getType :: MonadConstruct m => FuncType -> m TypeIdx
+runConstruct :: Construct a -> Module
+runConstruct action = evalState (action >> use (the @"modl")) emptyState
+
+getType :: FuncType -> Construct TypeIdx
 getType funcType = do
   typeIdxs <- use (the @"modlState" . the @"typeIdxs")
 
@@ -134,7 +133,7 @@ getType funcType = do
     Just typeIdx ->
       return typeIdx
 
-importFunc :: MonadConstruct m => String -> String -> [ValType] -> [ValType] -> m ()
+importFunc :: String -> String -> [ValType] -> [ValType] -> Construct ()
 importFunc namespace name inputType outputType = do
   funcSec <- use (the @"modl" . the @"funcSec")
 
@@ -168,7 +167,7 @@ importFunc namespace name inputType outputType = do
   (the @"modl" . the @"linkingSec") <>= [info]
   (the @"modlState" . the @"funcIdxs") <>= [(name, (funcIdx, symIdx))]
 
-importTable :: MonadConstruct m => String -> String -> RefType -> Limits -> m ()
+importTable :: String -> String -> RefType -> Limits -> Construct ()
 importTable namespace name refType limits = do
   tableSec <- use (the @"modl" . the @"tableSec")
 
@@ -200,7 +199,7 @@ importTable namespace name refType limits = do
   (the @"modl" . the @"linkingSec") <>= [info]
   (the @"modlState" . the @"tableIdxs") <>= [(name, (tableIdx, symIdx))]
 
-importMem :: MonadConstruct m => String -> String -> Limits -> m ()
+importMem :: String -> String -> Limits -> Construct ()
 importMem namespace name limits = do
   memSec <- use (the @"modl" . the @"memSec")
 
@@ -215,7 +214,7 @@ importMem namespace name limits = do
   (the @"modl" . the @"importSec") <>= [mem]
   (the @"modlState" . the @"memIdxs") <>= [(name, memIdx)]
 
-importGlobal :: MonadConstruct m => String -> String -> ValType -> Mut -> m ()
+importGlobal :: String -> String -> ValType -> Mut -> Construct ()
 importGlobal namespace name valType mut = do
   globalSec <- use (the @"modl" . the @"globalSec")
 
@@ -247,7 +246,7 @@ importGlobal namespace name valType mut = do
   (the @"modl" . the @"linkingSec") <>= [info]
   (the @"modlState" . the @"globalIdxs") <>= [(name, (globalIdx, symIdx))]
 
-declareFunc :: MonadConstruct m => String -> [ValType] -> [ValType] -> m ()
+declareFunc :: String -> [ValType] -> [ValType] -> Construct ()
 declareFunc name inputType outputType = do
   typeIdx <- getType (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
 
@@ -274,7 +273,7 @@ declareFunc name inputType outputType = do
   (the @"modl" . the @"linkingSec") <>= [info]
   (the @"modlState" . the @"funcIdxs") <>= [(name, (funcIdx, symIdx))]
 
-declareTable :: MonadConstruct m => String -> RefType -> Limits -> m ()
+declareTable :: String -> RefType -> Limits -> Construct ()
 declareTable name refType limits = do
   tableIdx <- use (the @"modlState" . the @"nextTableIdx")
   (the @"modlState" . the @"nextTableIdx") .= succ tableIdx
@@ -301,7 +300,7 @@ declareTable name refType limits = do
   (the @"modl" . the @"linkingSec") <>= [info]
   (the @"modlState" . the @"tableIdxs") <>= [(name, (tableIdx, symIdx))]
 
-declareMem :: MonadConstruct m => String -> Limits -> m ()
+declareMem :: String -> Limits -> Construct ()
 declareMem name limits = do
   memIdx <- use (the @"modlState" . the @"nextMemIdx")
   (the @"modlState" . the @"nextMemIdx") .= succ memIdx
@@ -311,7 +310,7 @@ declareMem name limits = do
   (the @"modl" . the @"memSec") <>= [mem]
   (the @"modlState" . the @"memIdxs") <>= [(name, memIdx)]
 
-declareGlobal :: MonadConstruct m => String -> ValType -> Mut -> Expr -> m ()
+declareGlobal :: String -> ValType -> Mut -> Expr -> Construct ()
 declareGlobal name valType mut expr = do
   globalIdx <- use (the @"modlState" . the @"nextGlobalIdx")
   (the @"modlState" . the @"nextGlobalIdx") .= succ globalIdx
@@ -338,7 +337,7 @@ declareGlobal name valType mut expr = do
   (the @"modl" . the @"linkingSec") <>= [info]
   (the @"modlState" . the @"globalIdxs") <>= [(name, (globalIdx, symIdx))]
 
-exportFunc :: MonadConstruct m => String -> m ()
+exportFunc :: String -> Construct ()
 exportFunc name = do
   funcIdxs <- use (the @"modlState" . the @"funcIdxs")
 
@@ -349,7 +348,7 @@ exportFunc name = do
     Just (funcIdx, _) ->
       (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportFunc funcIdx)]
 
-exportTable :: MonadConstruct m => String -> m ()
+exportTable :: String -> Construct ()
 exportTable name = do
   tableIdxs <- use (the @"modlState" . the @"tableIdxs")
 
@@ -360,7 +359,7 @@ exportTable name = do
     Just (tableIdx, _) ->
       (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportTable tableIdx)]
 
-exportMem :: MonadConstruct m => String -> m ()
+exportMem :: String -> Construct ()
 exportMem name = do
   memIdxs <- use (the @"modlState" . the @"memIdxs")
 
@@ -371,7 +370,7 @@ exportMem name = do
     Just memIdx ->
       (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportMem memIdx)]
 
-exportGlobal :: MonadConstruct m => String -> m ()
+exportGlobal :: String -> Construct ()
 exportGlobal name = do
   globalIdxs <- use (the @"modlState" . the @"globalIdxs")
 
@@ -382,7 +381,7 @@ exportGlobal name = do
     Just (globalIdx, _) ->
       (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportGlobal globalIdx)]
 
-setStart :: MonadConstruct m => String -> m ()
+setStart :: String -> Construct ()
 setStart name = do
   funcIdxs <- use (the @"modlState" . the @"funcIdxs")
 
@@ -393,7 +392,7 @@ setStart name = do
     Just (funcIdx, _) ->
       (the @"modl" . the @"startSec") .= Just funcIdx
 
-commitFuncRefs :: MonadConstruct m => m ()
+commitFuncRefs :: Construct ()
 commitFuncRefs = do
   elemSec <- use (the @"modl" . the @"elemSec")
   funcRefs <- use (the @"modlState" . the @"funcRefs")
@@ -408,18 +407,3 @@ commitFuncRefs = do
 
   (the @"modlState" . the @"funcRefs") .=
     [(name, (funcRef, symIdx)) | (name, (_, symIdx)) <- funcIdxs | funcRef <- [1..]]
-
-newtype ConstructT m a =
-  ConstructT (StateT ConstructState m a)
-  deriving (Functor, Applicative, Monad, MonadState ConstructState)
-
-instance Monad m => MonadConstruct (ConstructT m)
-
-runConstructT :: Monad m => ConstructT m a -> m Module
-runConstructT (ConstructT action) =
-  evalStateT (action >> use (the @"modl")) emptyState
-
-type Construct = ConstructT Identity
-
-runConstruct :: Construct a -> Module
-runConstruct action = runIdentity (runConstructT action)
