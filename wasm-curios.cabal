@@ -35,7 +35,6 @@ library
       Syntax.LLVM
       Syntax.Module
       Syntax.Types
-      Util
   other-modules:
       Paths_wasm_curios
   hs-source-dirs:

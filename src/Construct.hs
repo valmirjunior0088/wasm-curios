@@ -61,14 +61,13 @@ import Syntax.Module
 
 import Syntax.Instructions (Instr (..), Expr (..))
 import Syntax.LLVM (SymType (..), SymFlags (..), SymInfo (..))
-import Util (push)
 import Control.Monad (unless)
 import Control.Monad.State (MonadState (..), StateT, evalStateT)
 import Control.Monad.Identity (Identity, runIdentity)
 import Data.Int (Int32)
 import GHC.Generics (Generic)
 import Data.Generics.Product (the)
-import Control.Lens (use, (.=), (%=))
+import Control.Lens (use, (.=), (<>=))
 
 data ModlState = ModlState
   { nextTypeIdx :: TypeIdx
@@ -127,8 +126,8 @@ getType funcType = do
       typeIdx <- use (the @"modlState" . the @"nextTypeIdx")
       (the @"modlState" . the @"nextTypeIdx") .= succ typeIdx
 
-      (the @"modl" . the @"typeSec") %= push funcType
-      (the @"modlState" . the @"typeIdxs") %= push (funcType, typeIdx)
+      (the @"modl" . the @"typeSec") <>= [funcType]
+      (the @"modlState" . the @"typeIdxs") <>= [(funcType, typeIdx)]
 
       return typeIdx
     
@@ -165,9 +164,9 @@ importFunc namespace name inputType outputType = do
     
     info = SymInfo (SYMTAB_FUNCTION funcIdx Nothing) flags
   
-  (the @"modl" . the @"importSec") %= push func
-  (the @"modl" . the @"linkingSec") %= push info
-  (the @"modlState" . the @"funcIdxs") %= push (name, (funcIdx, symIdx))
+  (the @"modl" . the @"importSec") <>= [func]
+  (the @"modl" . the @"linkingSec") <>= [info]
+  (the @"modlState" . the @"funcIdxs") <>= [(name, (funcIdx, symIdx))]
 
 importTable :: MonadConstruct m => String -> String -> RefType -> Limits -> m ()
 importTable namespace name refType limits = do
@@ -197,9 +196,9 @@ importTable namespace name refType limits = do
     
     info = SymInfo (SYMTAB_TABLE tableIdx Nothing) flags
   
-  (the @"modl" . the @"importSec") %= push table
-  (the @"modl" . the @"linkingSec") %= push info
-  (the @"modlState" . the @"tableIdxs") %= push (name, (tableIdx, symIdx))
+  (the @"modl" . the @"importSec") <>= [table]
+  (the @"modl" . the @"linkingSec") <>= [info]
+  (the @"modlState" . the @"tableIdxs") <>= [(name, (tableIdx, symIdx))]
 
 importMem :: MonadConstruct m => String -> String -> Limits -> m ()
 importMem namespace name limits = do
@@ -213,8 +212,8 @@ importMem namespace name limits = do
 
   let mem = Import (Name namespace) (Name name) (ImportMem (MemType limits))
   
-  (the @"modl" . the @"importSec") %= push mem
-  (the @"modlState" . the @"memIdxs") %= push (name, memIdx)
+  (the @"modl" . the @"importSec") <>= [mem]
+  (the @"modlState" . the @"memIdxs") <>= [(name, memIdx)]
 
 importGlobal :: MonadConstruct m => String -> String -> ValType -> Mut -> m ()
 importGlobal namespace name valType mut = do
@@ -244,9 +243,9 @@ importGlobal namespace name valType mut = do
     
     info = SymInfo (SYMTAB_GLOBAL globalIdx Nothing) flags
   
-  (the @"modl" . the @"importSec") %= push global
-  (the @"modl" . the @"linkingSec") %= push info
-  (the @"modlState" . the @"globalIdxs") %= push (name, (globalIdx, symIdx))
+  (the @"modl" . the @"importSec") <>= [global]
+  (the @"modl" . the @"linkingSec") <>= [info]
+  (the @"modlState" . the @"globalIdxs") <>= [(name, (globalIdx, symIdx))]
 
 declareFunc :: MonadConstruct m => String -> [ValType] -> [ValType] -> m ()
 declareFunc name inputType outputType = do
@@ -271,9 +270,9 @@ declareFunc name inputType outputType = do
 
     info = SymInfo (SYMTAB_FUNCTION funcIdx (Just (Name name))) flags
   
-  (the @"modl" . the @"funcSec") %= push typeIdx
-  (the @"modl" . the @"linkingSec") %= push info
-  (the @"modlState" . the @"funcIdxs") %= push (name, (funcIdx, symIdx))
+  (the @"modl" . the @"funcSec") <>= [typeIdx]
+  (the @"modl" . the @"linkingSec") <>= [info]
+  (the @"modlState" . the @"funcIdxs") <>= [(name, (funcIdx, symIdx))]
 
 declareTable :: MonadConstruct m => String -> RefType -> Limits -> m ()
 declareTable name refType limits = do
@@ -298,9 +297,9 @@ declareTable name refType limits = do
     
     info = SymInfo (SYMTAB_TABLE tableIdx (Just (Name name))) flags
   
-  (the @"modl" . the @"tableSec") %= push table
-  (the @"modl" . the @"linkingSec") %= push info
-  (the @"modlState" . the @"tableIdxs") %= push (name, (tableIdx, symIdx))
+  (the @"modl" . the @"tableSec") <>= [table]
+  (the @"modl" . the @"linkingSec") <>= [info]
+  (the @"modlState" . the @"tableIdxs") <>= [(name, (tableIdx, symIdx))]
 
 declareMem :: MonadConstruct m => String -> Limits -> m ()
 declareMem name limits = do
@@ -309,8 +308,8 @@ declareMem name limits = do
 
   let mem = Mem (MemType limits)
 
-  (the @"modl" . the @"memSec") %= push mem
-  (the @"modlState" . the @"memIdxs") %= push (name, memIdx)
+  (the @"modl" . the @"memSec") <>= [mem]
+  (the @"modlState" . the @"memIdxs") <>= [(name, memIdx)]
 
 declareGlobal :: MonadConstruct m => String -> ValType -> Mut -> Expr -> m ()
 declareGlobal name valType mut expr = do
@@ -335,9 +334,9 @@ declareGlobal name valType mut expr = do
     
     info = SymInfo (SYMTAB_GLOBAL globalIdx (Just (Name name))) flags
   
-  (the @"modl" . the @"globalSec") %= push global
-  (the @"modl" . the @"linkingSec") %= push info
-  (the @"modlState" . the @"globalIdxs") %= push (name, (globalIdx, symIdx))
+  (the @"modl" . the @"globalSec") <>= [global]
+  (the @"modl" . the @"linkingSec") <>= [info]
+  (the @"modlState" . the @"globalIdxs") <>= [(name, (globalIdx, symIdx))]
 
 exportFunc :: MonadConstruct m => String -> m ()
 exportFunc name = do
@@ -348,7 +347,7 @@ exportFunc name = do
       error ("tried to export unknown function \"" ++ name ++ "\"")
 
     Just (funcIdx, _) ->
-      (the @"modl" . the @"exportSec") %= push (Export (Name name) (ExportFunc funcIdx))
+      (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportFunc funcIdx)]
 
 exportTable :: MonadConstruct m => String -> m ()
 exportTable name = do
@@ -359,7 +358,7 @@ exportTable name = do
       error ("tried to export unknown table \"" ++ name ++ "\"")
 
     Just (tableIdx, _) ->
-      (the @"modl" . the @"exportSec") %= push (Export (Name name) (ExportTable tableIdx))
+      (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportTable tableIdx)]
 
 exportMem :: MonadConstruct m => String -> m ()
 exportMem name = do
@@ -370,7 +369,7 @@ exportMem name = do
       error ("tried to export unknown memory \"" ++ name ++ "\"")
 
     Just memIdx ->
-      (the @"modl" . the @"exportSec") %= push (Export (Name name) (ExportMem memIdx))
+      (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportMem memIdx)]
 
 exportGlobal :: MonadConstruct m => String -> m ()
 exportGlobal name = do
@@ -381,7 +380,7 @@ exportGlobal name = do
       error ("tried to export unknown global \"" ++ name ++ "\"")
 
     Just (globalIdx, _) ->
-      (the @"modl" . the @"exportSec") %= push (Export (Name name) (ExportGlobal globalIdx))
+      (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportGlobal globalIdx)]
 
 setStart :: MonadConstruct m => String -> m ()
 setStart name = do
