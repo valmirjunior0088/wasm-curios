@@ -26,14 +26,13 @@ data Instr =
   Nop |
   Block BlockType [Instr] |
   Loop BlockType [Instr] |
-  If BlockType [Instr] |
-  IfElse BlockType [Instr] [Instr] |
   Br LabelIdx |
   BrIf LabelIdx |
   BrTable (Vec LabelIdx) LabelIdx |
   Return |
   Call FuncIdx SymIdx |
   CallIndirect TypeIdx TableIdx |
+  Drop |
   LocalGet LocalIdx |
   LocalSet LocalIdx |
   LocalTee LocalIdx |

@@ -277,18 +277,6 @@ instance Serialize Instr where
       <> mconcat (map serialize instrs)
       <> byte 0x0B
     
-    If blockType instrs -> byte 0x04
-      <> serialize blockType
-      <> mconcat (map serialize instrs)
-      <> byte 0x0B
-    
-    IfElse blockType ifInstrs elseInstrs -> byte 0x04
-      <> serialize blockType
-      <> mconcat (map serialize ifInstrs)
-      <> byte 0x05
-      <> mconcat (map serialize elseInstrs)
-      <> byte 0x08
-    
     Br labelIdx -> byte 0x0C <> serialize labelIdx
 
     BrIf labelIdx -> byte 0x0D <> serialize labelIdx
@@ -304,6 +292,8 @@ instance Serialize Instr where
     CallIndirect typeIdx tableIdx -> byte 0x11
       <> serialize typeIdx
       <> serialize tableIdx
+    
+    Drop -> byte 0x1A
     
     LocalGet localIdx -> byte 0x20 <> serialize localIdx
 
@@ -427,18 +417,6 @@ instance RelocSerialize Instr where
     Loop blockType instrs -> relocEmpty (byte 0x03)
       <> relocEmpty (serialize blockType)
       <> mconcat (map relocSerialize instrs)
-      <> relocEmpty (byte 0x0B)
-
-    If blockType instrs -> relocEmpty (byte 0x04)
-      <> relocEmpty (serialize blockType)
-      <> mconcat (map relocSerialize instrs)
-      <> relocEmpty (byte 0x0B)
-
-    IfElse blockType ifInstrs elseInstrs -> relocEmpty (byte 0x04)
-      <> relocEmpty (serialize blockType)
-      <> mconcat (map relocSerialize ifInstrs)
-      <> relocEmpty (byte 0x05)
-      <> mconcat (map relocSerialize elseInstrs)
       <> relocEmpty (byte 0x0B)
     
     GlobalGet (GlobalIdx globalIdx) symIdx -> relocEmpty (byte 0x23)

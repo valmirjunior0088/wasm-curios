@@ -15,6 +15,20 @@ module Construct
   , exportGlobal
   , setStart
   , commitFuncRefs
+  , addParameter
+  , addLocal
+  , pushFrame
+  , pushUnreachable
+  , pushNop
+  , pushBlock
+  , pushLoop
+  , pushBr
+  , pushBrIf
+  , pushBrTable
+  , pushReturn
+  , pushDrop
+  , pushI32Const
+  , commitCode
   )
   where
 
@@ -24,6 +38,8 @@ import Syntax.Conventions
   , TableIdx
   , MemIdx
   , GlobalIdx
+  , LocalIdx
+  , LabelIdx
   , SymIdx
   , Vec (..)
   , Name (..)
@@ -50,18 +66,22 @@ import Syntax.Module
   , Table (..)
   , Mem (..)
   , Elem (..)
+  , Locals (..)
+  , Func (..)
+  , Code (..)
   , Module (..)
   , emptyModule
   )
 
-import Syntax.Instructions (Instr (..), Expr (..))
+import Syntax.Instructions (BlockType (..), Instr (..), Expr (..))
 import Syntax.LLVM (SymType (..), SymFlags (..), SymInfo (..))
 import Control.Monad (unless)
 import Control.Monad.State (State, evalState)
 import Data.Int (Int32)
+import Data.List (group)
 import GHC.Generics (Generic)
 import Data.Generics.Product (the)
-import Control.Lens (use, (.=), (<>=))
+import Control.Lens (use, (.=), (%=), (<>=), mapped, _2, _head)
 
 data ModlState = ModlState
   { nextTypeIdx :: TypeIdx
@@ -97,9 +117,32 @@ emptyModlState = ModlState
   , funcRefs = []
   }
 
+data CodeState = CodeState
+  { nextLocalIdx :: LocalIdx
+
+  , locals :: [ValType]
+  , variables :: [(String, LocalIdx)]
+
+  , frames :: [[Instr]]
+  , labels :: [(String, LabelIdx)]
+  }
+  deriving (Show, Generic)
+
+emptyCodeState :: CodeState
+emptyCodeState = CodeState
+  { nextLocalIdx = 0
+
+  , locals = []
+  , variables = []
+  
+  , frames = [[]]
+  , labels = [("return", 0)]
+  }
+
 data ConstructState = ConstructState
   { modl :: Module
   , modlState :: ModlState
+  , codeState :: CodeState
   }
   deriving (Show, Generic)
 
@@ -107,6 +150,7 @@ emptyState :: ConstructState
 emptyState = ConstructState 
   { modl = emptyModule
   , modlState = emptyModlState
+  , codeState = emptyCodeState
   }
 
 type Construct = State ConstructState
@@ -138,7 +182,8 @@ importFunc namespace name inputType outputType = do
   unless (null funcSec)
     (error "cannot import func after having declared a func")
 
-  typeIdx <- getType (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
+  typeIdx <- getType
+    (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
 
   funcIdx <- use (the @"modlState" . the @"nextFuncIdx")
   (the @"modlState" . the @"nextFuncIdx") .= succ funcIdx
@@ -246,7 +291,8 @@ importGlobal namespace name valType mut = do
 
 declareFunc :: String -> [ValType] -> [ValType] -> Construct ()
 declareFunc name inputType outputType = do
-  typeIdx <- getType (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
+  typeIdx <- getType
+    (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
 
   funcIdx <- use (the @"modlState" . the @"nextFuncIdx")
   (the @"modlState" . the @"nextFuncIdx") .= succ funcIdx
@@ -405,3 +451,112 @@ commitFuncRefs = do
 
   (the @"modlState" . the @"funcRefs") .=
     [(name, (funcRef, symIdx)) | (name, (_, symIdx)) <- funcIdxs | funcRef <- [1..]]
+
+addParameter :: String -> Construct ()
+addParameter name = do
+  locals <- use (the @"codeState" . the @"locals")
+
+  unless (null locals)
+    (error "cannot add a parameter after having added a local")
+  
+  localIdx <- use (the @"codeState" . the @"nextLocalIdx")
+  (the @"codeState" . the @"nextLocalIdx") .= succ localIdx
+
+  (the @"codeState" . the @"variables") <>= [(name, localIdx)]
+
+addLocal :: String -> ValType -> Construct ()
+addLocal name valType = do
+  localIdx <- use (the @"codeState" . the @"nextLocalIdx")
+  (the @"codeState" . the @"nextLocalIdx") .= succ localIdx
+
+  (the @"codeState" . the @"locals") <>= [valType]
+  (the @"codeState" . the @"variables") <>= [(name, localIdx)]
+
+pushFrame :: String -> Construct ()
+pushFrame name = do
+  (the @"codeState" . the @"frames") %= ([] :)
+
+  (the @"codeState" . the @"labels" . mapped . _2) %= succ
+  (the @"codeState" . the @"labels") %= ((name, 0) :)
+
+popFrame :: Construct [Instr]
+popFrame = do
+  frame <- use (the @"codeState" . the @"frames" . _head)
+  (the @"codeState" . the @"frames") %= tail
+
+  (the @"codeState" . the @"labels") %= tail
+  (the @"codeState" . the @"labels" . mapped . _2) %= pred
+
+  return frame
+
+pushInstr :: Instr -> Construct ()
+pushInstr instr =
+  (the @"codeState" . the @"frames" . _head) <>= [instr]
+
+pushUnreachable :: Construct ()
+pushUnreachable = pushInstr Unreachable
+
+pushNop :: Construct ()
+pushNop = pushInstr Nop
+
+getBlockType :: ([ValType], [ValType]) -> Construct BlockType
+getBlockType = \case
+  ([], []) ->
+    return BlockEmpty
+  
+  ([], [valType]) ->
+    return (BlockValType valType)
+  
+  (inputType, outputType) -> do
+    typeIdx <- getType
+      (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
+
+    return (BlockTypeIdx typeIdx)
+
+pushBlock :: [ValType] -> [ValType] -> Construct ()
+pushBlock inputType outputType =
+  pushInstr =<< Block <$> getBlockType (inputType, outputType) <*> popFrame
+
+pushLoop :: [ValType] -> [ValType] -> Construct ()
+pushLoop inputType outputType =
+  pushInstr =<< Loop <$> getBlockType (inputType, outputType) <*> popFrame
+
+getLabel :: String -> Construct LabelIdx
+getLabel name = do
+  labels <- use (the @"codeState" . the @"labels")
+
+  case lookup name labels of
+    Nothing -> error ("tried to get unknown label \"" ++ name ++ "\"")
+    Just labelIdx -> return labelIdx
+
+pushBr :: String -> Construct ()
+pushBr name = pushInstr . Br =<< getLabel name
+
+pushBrIf :: String -> Construct ()
+pushBrIf name = pushInstr . BrIf =<< getLabel name
+
+pushBrTable :: [String] -> String -> Construct ()
+pushBrTable names name =
+  pushInstr =<< BrTable <$> (Vec <$> mapM getLabel names) <*> getLabel name
+
+pushReturn :: Construct ()
+pushReturn = pushInstr Return
+
+pushDrop :: Construct ()
+pushDrop = pushInstr Drop
+
+pushI32Const :: Int32 -> Construct ()
+pushI32Const value = pushInstr (I32Const value)
+
+commitCode :: Construct ()
+commitCode = do
+  locals <- use (the @"codeState" . the @"locals")
+  frames <- use (the @"codeState" . the @"frames")
+
+  unless (length frames == 1)
+    (error "wrong number of frames found when commiting code")
+  
+  (the @"modl" . the @"codeSec") <>=
+    [Code (Func (Vec [Locals (fromIntegral $ length valTypes) (head valTypes) | valTypes <- group locals]) (Expr (head frames)))]
+  
+  (the @"codeState") .= emptyCodeState

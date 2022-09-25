@@ -8,8 +8,19 @@ main = writeModule "./test.wasm" $ runConstruct $ do
   importMem "env" "__linear_memory" (Unbounded 1)
   importFunc "env" "alloc" [ValNumType I32] [ValNumType I32]
   importFunc "env" "dealloc" [ValNumType I32] []
+
+  declareFunc "one_test" [] [ValNumType I32]
+  declareFunc "another_test" [] [ValNumType I32]
   
   commitFuncRefs
 
-  exportFunc "alloc"
-  exportFunc "dealloc"
+  pushI32Const 5
+  commitCode
+
+  pushFrame "outer"
+  pushFrame "inner"
+  pushI32Const 6
+  pushBr "outer"
+  pushBlock [] [ValNumType I32]
+  pushBlock [] [ValNumType I32]
+  commitCode
