@@ -200,11 +200,11 @@ importFunc namespace name inputType outputType = do
       , wasm_sym_visibility_hidden = False
       , wasm_sym_undefined = True
       , wasm_sym_exported = False
-      , wasm_sym_explicit_name = False
+      , wasm_sym_explicit_name = True
       , wasm_sym_no_strip = False
       }
     
-    info = SymInfo (SYMTAB_FUNCTION funcIdx Nothing) flags
+    info = SymInfo (SYMTAB_FUNCTION funcIdx (Just (Name name))) flags
   
   (the @"modl" . the @"importSec") <>= [func]
   (the @"modl" . the @"linkingSec") <>= [info]
@@ -232,11 +232,11 @@ importTable namespace name refType limits = do
       , wasm_sym_visibility_hidden = False
       , wasm_sym_undefined = True
       , wasm_sym_exported = False
-      , wasm_sym_explicit_name = False
+      , wasm_sym_explicit_name = True
       , wasm_sym_no_strip = False
       }
     
-    info = SymInfo (SYMTAB_TABLE tableIdx Nothing) flags
+    info = SymInfo (SYMTAB_TABLE tableIdx (Just (Name name))) flags
   
   (the @"modl" . the @"importSec") <>= [table]
   (the @"modl" . the @"linkingSec") <>= [info]
@@ -279,11 +279,11 @@ importGlobal namespace name valType mut = do
       , wasm_sym_visibility_hidden = False
       , wasm_sym_undefined = True
       , wasm_sym_exported = False
-      , wasm_sym_explicit_name = False
+      , wasm_sym_explicit_name = True
       , wasm_sym_no_strip = False
       }
     
-    info = SymInfo (SYMTAB_GLOBAL globalIdx Nothing) flags
+    info = SymInfo (SYMTAB_GLOBAL globalIdx (Just (Name name))) flags
   
   (the @"modl" . the @"importSec") <>= [global]
   (the @"modl" . the @"linkingSec") <>= [info]
