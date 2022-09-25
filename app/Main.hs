@@ -22,5 +22,7 @@ main = writeModule "./test.wasm" $ runConstruct $ do
   pushI32Const 6
   pushBr "outer"
   pushBlock [] [ValNumType I32]
+  pushI32Const 7
+  pushBr "outer"
   pushBlock [] [ValNumType I32]
   commitCode

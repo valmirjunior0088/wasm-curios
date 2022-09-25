@@ -26,8 +26,26 @@ module Construct
   , pushBrIf
   , pushBrTable
   , pushReturn
+  , pushCall
+  , pushCallIndirect
   , pushDrop
+  , pushLocalGet
+  , pushLocalSet
+  , pushGlobalGet
+  , pushGlobalSet
+  , pushI32Load
+  , pushI64Load
+  , pushF32Load
+  , pushF64Load
+  , pushI32Store
+  , pushI64Store
+  , pushF32Store
+  , pushF64Store
   , pushI32Const
+  , pushI64Const
+  , pushF32Const
+  , pushF64Const
+  , pushI32FuncRef
   , commitCode
   )
   where
@@ -73,11 +91,11 @@ import Syntax.Module
   , emptyModule
   )
 
-import Syntax.Instructions (BlockType (..), Instr (..), Expr (..))
+import Syntax.Instructions (BlockType (..), MemArg (..), Instr (..), Expr (..))
 import Syntax.LLVM (SymType (..), SymFlags (..), SymInfo (..))
 import Control.Monad (unless)
 import Control.Monad.State (State, evalState)
-import Data.Int (Int32)
+import Data.Int (Int32, Int64)
 import Data.List (group)
 import GHC.Generics (Generic)
 import Data.Generics.Product (the)
@@ -542,11 +560,107 @@ pushBrTable names name =
 pushReturn :: Construct ()
 pushReturn = pushInstr Return
 
+pushCall :: String -> Construct ()
+pushCall name = do
+  funcs <- use (the @"modlState" . the @"funcIdxs")
+
+  case lookup name funcs of
+    Nothing -> error ("tried to call unknown function \"" ++ name ++ "\"")
+    Just (funcIdx, symIdx) -> pushInstr (Call funcIdx symIdx)
+
+pushCallIndirect :: String -> [ValType] -> [ValType] -> Construct ()
+pushCallIndirect name inputType outputType = do
+  tables <- use (the @"modlState" . the @"tableIdxs")
+
+  case lookup name tables of
+    Nothing ->
+      error ("tried to call indirect unknown table \"" ++ name ++ "\"")
+    
+    Just (tableIdx, _) -> do
+      typeIdx <- getType
+        (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
+      
+      pushInstr (CallIndirect typeIdx tableIdx)
+
 pushDrop :: Construct ()
 pushDrop = pushInstr Drop
 
+getLocal :: String -> Construct LocalIdx
+getLocal name = do
+  variables <- use (the @"codeState" . the @"variables")
+
+  case lookup name variables of
+    Nothing -> error ("tried to get unknown variable \"" ++ name ++ "\"")
+    Just localIdx -> return localIdx
+
+pushLocalGet :: String -> Construct ()
+pushLocalGet name = pushInstr . LocalGet =<< getLocal name
+
+pushLocalSet :: String -> Construct ()
+pushLocalSet name = pushInstr . LocalSet =<< getLocal name
+
+pushLocalTee :: String -> Construct ()
+pushLocalTee name = pushInstr . LocalTee =<< getLocal name
+
+getGlobal :: String -> Construct (GlobalIdx, SymIdx)
+getGlobal name = do
+  globals <- use (the @"modlState" . the @"globalIdxs")
+
+  case lookup name globals of
+    Nothing -> error ("tried to get unknown global \"" ++ name ++ "\"")
+    Just (globalIdx, symIdx) -> return (globalIdx, symIdx)
+
+pushGlobalGet :: String -> Construct ()
+pushGlobalGet name =
+  pushInstr . uncurry GlobalGet =<< getGlobal name
+
+pushGlobalSet :: String -> Construct ()
+pushGlobalSet name =
+  pushInstr . uncurry GlobalSet =<< getGlobal name
+
+pushI32Load :: MemArg -> Construct ()
+pushI32Load memArg = pushInstr (I32Load memArg)
+
+pushI64Load :: MemArg -> Construct ()
+pushI64Load memArg = pushInstr (I64Load memArg)
+
+pushF32Load :: MemArg -> Construct ()
+pushF32Load memArg = pushInstr (F32Load memArg)
+
+pushF64Load :: MemArg -> Construct ()
+pushF64Load memArg = pushInstr (F64Load memArg)
+
+pushI32Store :: MemArg -> Construct ()
+pushI32Store memArg = pushInstr (I32Store memArg)
+
+pushI64Store :: MemArg -> Construct ()
+pushI64Store memArg = pushInstr (I64Store memArg)
+
+pushF32Store :: MemArg -> Construct ()
+pushF32Store memArg = pushInstr (F32Store memArg)
+
+pushF64Store :: MemArg -> Construct ()
+pushF64Store memArg = pushInstr (F64Store memArg)
+
 pushI32Const :: Int32 -> Construct ()
 pushI32Const value = pushInstr (I32Const value)
+
+pushI64Const :: Int64 -> Construct ()
+pushI64Const value = pushInstr (I64Const value)
+
+pushF32Const :: Float -> Construct ()
+pushF32Const value = pushInstr (F32Const value)
+
+pushF64Const :: Double -> Construct ()
+pushF64Const value = pushInstr (F64Const value)
+
+pushI32FuncRef :: String -> Construct ()
+pushI32FuncRef name = do
+  funcRefs <- use (the @"modlState" . the @"funcRefs")
+
+  case lookup name funcRefs of
+    Nothing -> error ("tried to create unknown func ref \"" ++ name ++ "\"")
+    Just (funcRef, symIdx) -> pushInstr (I32FuncRef funcRef symIdx)
 
 commitCode :: Construct ()
 commitCode = do
