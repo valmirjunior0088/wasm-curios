@@ -498,11 +498,6 @@ instance Serialize SymInfo where
       <> serialize symFlags
       <> serialize globalIdx
       <> maybe mempty serialize maybeName
-      
-    SymInfo (SYMTAB_TABLE tableIdx maybeName) symFlags -> unsigned (5 :: Word32)
-      <> serialize symFlags
-      <> serialize tableIdx
-      <> maybe mempty serialize maybeName
 
 instance Serialize LinkingSubsec where
   serialize = \case

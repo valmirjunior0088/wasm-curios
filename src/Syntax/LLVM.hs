@@ -22,8 +22,7 @@ linkingVersion = 2
 data SymType =
   SYMTAB_FUNCTION FuncIdx (Maybe Name) |
   SYMTAB_DATA Name DataIdx Word32 Word32 |
-  SYMTAB_GLOBAL GlobalIdx (Maybe Name) |
-  SYMTAB_TABLE TableIdx (Maybe Name)
+  SYMTAB_GLOBAL GlobalIdx (Maybe Name)
   deriving (Show)
 
 data SymFlags = SymFlags

@@ -111,7 +111,7 @@ data ModlState = ModlState
 
   , typeIdxs :: [(FuncType, TypeIdx)]
   , funcIdxs :: [(String, (FuncIdx, SymIdx))]
-  , tableIdxs :: [(String, (TableIdx, SymIdx))]
+  , tableIdxs :: [(String, TableIdx)]
   , memIdxs :: [(String, MemIdx)]
   , globalIdxs :: [(String, (GlobalIdx, SymIdx))]
   , funcRefs :: [(String, (Int32, SymIdx))] 
@@ -238,27 +238,10 @@ importTable namespace name refType limits = do
   tableIdx <- use (the @"modlState" . the @"nextTableIdx")
   (the @"modlState" . the @"nextTableIdx") .= succ tableIdx
 
-  symIdx <- use (the @"modlState" . the @"nextSymIdx")
-  (the @"modlState" . the @"nextSymIdx") .= succ symIdx
-
-  let
-    table = Import (Name namespace) (Name name) (ImportTable (TableType refType limits))
-
-    flags = SymFlags
-      { wasm_sym_binding_weak = False
-      , wasm_sym_binding_local = False
-      , wasm_sym_visibility_hidden = False
-      , wasm_sym_undefined = True
-      , wasm_sym_exported = False
-      , wasm_sym_explicit_name = True
-      , wasm_sym_no_strip = False
-      }
-    
-    info = SymInfo (SYMTAB_TABLE tableIdx (Just (Name name))) flags
+  let table = Import (Name namespace) (Name name) (ImportTable (TableType refType limits))
   
   (the @"modl" . the @"importSec") <>= [table]
-  (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"modlState" . the @"tableIdxs") <>= [(name, (tableIdx, symIdx))]
+  (the @"modlState" . the @"tableIdxs") <>= [(name, tableIdx)]
 
 importMem :: String -> String -> Limits -> Construct ()
 importMem namespace name limits = do
@@ -340,27 +323,10 @@ declareTable name refType limits = do
   tableIdx <- use (the @"modlState" . the @"nextTableIdx")
   (the @"modlState" . the @"nextTableIdx") .= succ tableIdx
 
-  symIdx <- use (the @"modlState" . the @"nextSymIdx")
-  (the @"modlState" . the @"nextSymIdx") .= succ symIdx
-
-  let
-    table = Table (TableType refType limits)
-
-    flags = SymFlags
-      { wasm_sym_binding_weak = False
-      , wasm_sym_binding_local = False
-      , wasm_sym_visibility_hidden = False
-      , wasm_sym_undefined = False
-      , wasm_sym_exported = False
-      , wasm_sym_explicit_name = True
-      , wasm_sym_no_strip = False
-      }
-    
-    info = SymInfo (SYMTAB_TABLE tableIdx (Just (Name name))) flags
+  let table = Table (TableType refType limits)
   
   (the @"modl" . the @"tableSec") <>= [table]
-  (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"modlState" . the @"tableIdxs") <>= [(name, (tableIdx, symIdx))]
+  (the @"modlState" . the @"tableIdxs") <>= [(name, tableIdx)]
 
 declareMem :: String -> Limits -> Construct ()
 declareMem name limits = do
@@ -418,7 +384,7 @@ exportTable name = do
     Nothing ->
       error ("tried to export unknown table \"" ++ name ++ "\"")
 
-    Just (tableIdx, _) ->
+    Just tableIdx ->
       (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportTable tableIdx)]
 
 exportMem :: String -> Construct ()
@@ -568,20 +534,13 @@ pushCall name = do
     Nothing -> error ("tried to call unknown function \"" ++ name ++ "\"")
     Just (funcIdx, symIdx) -> pushInstr (Call funcIdx symIdx)
 
-pushCallIndirect :: String -> [ValType] -> [ValType] -> Construct ()
-pushCallIndirect name inputType outputType = do
-  tables <- use (the @"modlState" . the @"tableIdxs")
-
-  case lookup name tables of
-    Nothing ->
-      error ("tried to call indirect unknown table \"" ++ name ++ "\"")
+pushCallIndirect :: [ValType] -> [ValType] -> Construct ()
+pushCallIndirect inputType outputType = do
+  typeIdx <- getType
+    (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
     
-    Just (tableIdx, _) -> do
-      typeIdx <- getType
-        (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
+  pushInstr (CallIndirect typeIdx 0)
       
-      pushInstr (CallIndirect typeIdx tableIdx)
-
 pushDrop :: Construct ()
 pushDrop = pushInstr Drop
 
