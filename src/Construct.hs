@@ -195,14 +195,14 @@ getType funcType = do
       return typeIdx
 
 importFunc :: String -> String -> [ValType] -> [ValType] -> Construct ()
-importFunc namespace name inputType outputType = do
+importFunc namespace name inputs outputs = do
   funcSec <- use (the @"modl" . the @"funcSec")
 
   unless (null funcSec)
     (error "cannot import func after having declared a func")
 
   typeIdx <- getType
-    (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
+    (FuncType (ResultType (Vec inputs)) (ResultType (Vec outputs)))
 
   funcIdx <- use (the @"modlState" . the @"nextFuncIdx")
   (the @"modlState" . the @"nextFuncIdx") .= succ funcIdx
@@ -292,9 +292,9 @@ importGlobal namespace name valType mut = do
   (the @"modlState" . the @"globals") <>= [(name, (globalIdx, symIdx))]
 
 declareFunc :: String -> [ValType] -> [ValType] -> Construct ()
-declareFunc name inputType outputType = do
+declareFunc name inputs outputs = do
   typeIdx <- getType
-    (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
+    (FuncType (ResultType (Vec inputs)) (ResultType (Vec outputs)))
 
   funcIdx <- use (the @"modlState" . the @"nextFuncIdx")
   (the @"modlState" . the @"nextFuncIdx") .= succ funcIdx
@@ -492,19 +492,19 @@ getBlockType = \case
   ([], [valType]) ->
     return (BlockValType valType)
   
-  (inputType, outputType) -> do
+  (inputs, outputs) -> do
     typeIdx <- getType
-      (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
+      (FuncType (ResultType (Vec inputs)) (ResultType (Vec outputs)))
 
     return (BlockTypeIdx typeIdx)
 
 pushBlock :: [ValType] -> [ValType] -> Construct ()
-pushBlock inputType outputType =
-  pushInstr =<< Block <$> getBlockType (inputType, outputType) <*> popFrame
+pushBlock inputs outputs =
+  pushInstr =<< Block <$> getBlockType (inputs, outputs) <*> popFrame
 
 pushLoop :: [ValType] -> [ValType] -> Construct ()
-pushLoop inputType outputType =
-  pushInstr =<< Loop <$> getBlockType (inputType, outputType) <*> popFrame
+pushLoop inputs outputs =
+  pushInstr =<< Loop <$> getBlockType (inputs, outputs) <*> popFrame
 
 getLabel :: String -> Construct LabelIdx
 getLabel name = do
@@ -536,9 +536,9 @@ pushCall name = do
     Just (funcIdx, symIdx) -> pushInstr (Call funcIdx symIdx)
 
 pushCallIndirect :: [ValType] -> [ValType] -> Construct ()
-pushCallIndirect inputType outputType = do
+pushCallIndirect inputs outputs = do
   typeIdx <- getType
-    (FuncType (ResultType (Vec inputType)) (ResultType (Vec outputType)))
+    (FuncType (ResultType (Vec inputs)) (ResultType (Vec outputs)))
     
   pushInstr (CallIndirect typeIdx 0)
       
