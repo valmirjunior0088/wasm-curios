@@ -31,6 +31,7 @@ module Construct
   , pushDrop
   , pushLocalGet
   , pushLocalSet
+  , pushLocalTee
   , pushGlobalGet
   , pushGlobalSet
   , pushI32Load

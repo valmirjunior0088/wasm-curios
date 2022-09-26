@@ -11,7 +11,16 @@ module Syntax.LLVM
   )
   where
 
-import Syntax.Conventions (FuncIdx, DataIdx, GlobalIdx, TableIdx, SecIdx, SymIdx, Vec, Name)
+import Syntax.Conventions
+  ( FuncIdx
+  , DataIdx
+  , GlobalIdx
+  , SecIdx
+  , SymIdx
+  , Vec
+  , Name
+  )
+
 import Data.Int (Int32)
 import Data.Word (Word32)
 import GHC.Generics (Generic)
