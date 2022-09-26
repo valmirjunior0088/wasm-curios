@@ -544,8 +544,8 @@ pushCallIndirect inputType outputType = do
 pushDrop :: Construct ()
 pushDrop = pushInstr Drop
 
-getLocal :: String -> Construct LocalIdx
-getLocal name = do
+getVariable :: String -> Construct LocalIdx
+getVariable name = do
   variables <- use (the @"codeState" . the @"variables")
 
   case lookup name variables of
@@ -553,13 +553,13 @@ getLocal name = do
     Just localIdx -> return localIdx
 
 pushLocalGet :: String -> Construct ()
-pushLocalGet name = pushInstr . LocalGet =<< getLocal name
+pushLocalGet name = pushInstr . LocalGet =<< getVariable name
 
 pushLocalSet :: String -> Construct ()
-pushLocalSet name = pushInstr . LocalSet =<< getLocal name
+pushLocalSet name = pushInstr . LocalSet =<< getVariable name
 
 pushLocalTee :: String -> Construct ()
-pushLocalTee name = pushInstr . LocalTee =<< getLocal name
+pushLocalTee name = pushInstr . LocalTee =<< getVariable name
 
 getGlobal :: String -> Construct (GlobalIdx, SymIdx)
 getGlobal name = do
