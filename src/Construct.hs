@@ -110,11 +110,11 @@ data ModlState = ModlState
   , nextGlobalIdx :: GlobalIdx
   , nextSymIdx :: SymIdx
 
-  , typeIdxs :: [(FuncType, TypeIdx)]
-  , funcIdxs :: [(String, (FuncIdx, SymIdx))]
-  , tableIdxs :: [(String, TableIdx)]
-  , memIdxs :: [(String, MemIdx)]
-  , globalIdxs :: [(String, (GlobalIdx, SymIdx))]
+  , types :: [(FuncType, TypeIdx)]
+  , funcs :: [(String, (FuncIdx, SymIdx))]
+  , tables :: [(String, TableIdx)]
+  , mems :: [(String, MemIdx)]
+  , globals :: [(String, (GlobalIdx, SymIdx))]
   , funcRefs :: [(String, (Int32, SymIdx))] 
   }
   deriving (Show, Generic)
@@ -128,11 +128,11 @@ emptyModlState = ModlState
   , nextGlobalIdx = 0
   , nextSymIdx = 0
 
-  , typeIdxs = []
-  , funcIdxs = []
-  , tableIdxs = []
-  , memIdxs = []
-  , globalIdxs = []
+  , types = []
+  , funcs = []
+  , tables = []
+  , mems = []
+  , globals = []
   , funcRefs = []
   }
 
@@ -179,15 +179,15 @@ runConstruct action = evalState (action >> use (the @"modl")) emptyState
 
 getType :: FuncType -> Construct TypeIdx
 getType funcType = do
-  typeIdxs <- use (the @"modlState" . the @"typeIdxs")
+  types <- use (the @"modlState" . the @"types")
 
-  case lookup funcType typeIdxs of
+  case lookup funcType types of
     Nothing -> do
       typeIdx <- use (the @"modlState" . the @"nextTypeIdx")
       (the @"modlState" . the @"nextTypeIdx") .= succ typeIdx
 
       (the @"modl" . the @"typeSec") <>= [funcType]
-      (the @"modlState" . the @"typeIdxs") <>= [(funcType, typeIdx)]
+      (the @"modlState" . the @"types") <>= [(funcType, typeIdx)]
 
       return typeIdx
     
@@ -227,7 +227,7 @@ importFunc namespace name inputType outputType = do
   
   (the @"modl" . the @"importSec") <>= [func]
   (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"modlState" . the @"funcIdxs") <>= [(name, (funcIdx, symIdx))]
+  (the @"modlState" . the @"funcs") <>= [(name, (funcIdx, symIdx))]
 
 importTable :: String -> String -> RefType -> Limits -> Construct ()
 importTable namespace name refType limits = do
@@ -242,7 +242,7 @@ importTable namespace name refType limits = do
   let table = Import (Name namespace) (Name name) (ImportTable (TableType refType limits))
   
   (the @"modl" . the @"importSec") <>= [table]
-  (the @"modlState" . the @"tableIdxs") <>= [(name, tableIdx)]
+  (the @"modlState" . the @"tables") <>= [(name, tableIdx)]
 
 importMem :: String -> String -> Limits -> Construct ()
 importMem namespace name limits = do
@@ -257,7 +257,7 @@ importMem namespace name limits = do
   let mem = Import (Name namespace) (Name name) (ImportMem (MemType limits))
   
   (the @"modl" . the @"importSec") <>= [mem]
-  (the @"modlState" . the @"memIdxs") <>= [(name, memIdx)]
+  (the @"modlState" . the @"mems") <>= [(name, memIdx)]
 
 importGlobal :: String -> String -> ValType -> Mut -> Construct ()
 importGlobal namespace name valType mut = do
@@ -289,7 +289,7 @@ importGlobal namespace name valType mut = do
   
   (the @"modl" . the @"importSec") <>= [global]
   (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"modlState" . the @"globalIdxs") <>= [(name, (globalIdx, symIdx))]
+  (the @"modlState" . the @"globals") <>= [(name, (globalIdx, symIdx))]
 
 declareFunc :: String -> [ValType] -> [ValType] -> Construct ()
 declareFunc name inputType outputType = do
@@ -317,7 +317,7 @@ declareFunc name inputType outputType = do
   
   (the @"modl" . the @"funcSec") <>= [typeIdx]
   (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"modlState" . the @"funcIdxs") <>= [(name, (funcIdx, symIdx))]
+  (the @"modlState" . the @"funcs") <>= [(name, (funcIdx, symIdx))]
 
 declareTable :: String -> RefType -> Limits -> Construct ()
 declareTable name refType limits = do
@@ -327,7 +327,7 @@ declareTable name refType limits = do
   let table = Table (TableType refType limits)
   
   (the @"modl" . the @"tableSec") <>= [table]
-  (the @"modlState" . the @"tableIdxs") <>= [(name, tableIdx)]
+  (the @"modlState" . the @"tables") <>= [(name, tableIdx)]
 
 declareMem :: String -> Limits -> Construct ()
 declareMem name limits = do
@@ -337,7 +337,7 @@ declareMem name limits = do
   let mem = Mem (MemType limits)
 
   (the @"modl" . the @"memSec") <>= [mem]
-  (the @"modlState" . the @"memIdxs") <>= [(name, memIdx)]
+  (the @"modlState" . the @"mems") <>= [(name, memIdx)]
 
 declareGlobal :: String -> ValType -> Mut -> Expr -> Construct ()
 declareGlobal name valType mut expr = do
@@ -364,13 +364,13 @@ declareGlobal name valType mut expr = do
   
   (the @"modl" . the @"globalSec") <>= [global]
   (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"modlState" . the @"globalIdxs") <>= [(name, (globalIdx, symIdx))]
+  (the @"modlState" . the @"globals") <>= [(name, (globalIdx, symIdx))]
 
 exportFunc :: String -> Construct ()
 exportFunc name = do
-  funcIdxs <- use (the @"modlState" . the @"funcIdxs")
+  funcs <- use (the @"modlState" . the @"funcs")
 
-  case lookup name funcIdxs of
+  case lookup name funcs of
     Nothing ->
       error ("tried to export unknown function \"" ++ name ++ "\"")
 
@@ -379,9 +379,9 @@ exportFunc name = do
 
 exportTable :: String -> Construct ()
 exportTable name = do
-  tableIdxs <- use (the @"modlState" . the @"tableIdxs")
+  tables <- use (the @"modlState" . the @"tables")
 
-  case lookup name tableIdxs of
+  case lookup name tables of
     Nothing ->
       error ("tried to export unknown table \"" ++ name ++ "\"")
 
@@ -390,9 +390,9 @@ exportTable name = do
 
 exportMem :: String -> Construct ()
 exportMem name = do
-  memIdxs <- use (the @"modlState" . the @"memIdxs")
+  mems <- use (the @"modlState" . the @"mems")
 
-  case lookup name memIdxs of
+  case lookup name mems of
     Nothing ->
       error ("tried to export unknown memory \"" ++ name ++ "\"")
 
@@ -401,9 +401,9 @@ exportMem name = do
 
 exportGlobal :: String -> Construct ()
 exportGlobal name = do
-  globalIdxs <- use (the @"modlState" . the @"globalIdxs")
+  globals <- use (the @"modlState" . the @"globals")
 
-  case lookup name globalIdxs of
+  case lookup name globals of
     Nothing ->
       error ("tried to export unknown global \"" ++ name ++ "\"")
 
@@ -412,9 +412,9 @@ exportGlobal name = do
 
 setStart :: String -> Construct ()
 setStart name = do
-  funcIdxs <- use (the @"modlState" . the @"funcIdxs")
+  funcs <- use (the @"modlState" . the @"funcs")
 
-  case lookup name funcIdxs of
+  case lookup name funcs of
     Nothing ->
       error ("tried to set unknown function \"" ++ name ++ "\" as start")
 
@@ -429,13 +429,13 @@ commitFuncRefs = do
   unless (null elemSec && null funcRefs)
     (error "funcrefs are already committed and it is not possible to update them")
 
-  funcIdxs <- use (the @"modlState" . the @"funcIdxs")
+  funcs <- use (the @"modlState" . the @"funcs")
 
   (the @"modl" . the @"elemSec") .=
-    [Elem (Expr [I32Const 1]) (Vec [funcIdx | (_, (funcIdx, _)) <- funcIdxs])]
+    [Elem (Expr [I32Const 1]) (Vec [funcIdx | (_, (funcIdx, _)) <- funcs])]
 
   (the @"modlState" . the @"funcRefs") .=
-    [(name, (funcRef, symIdx)) | (name, (_, symIdx)) <- funcIdxs | funcRef <- [1..]]
+    [(name, (funcRef, symIdx)) | (name, (_, symIdx)) <- funcs | funcRef <- [1..]]
 
 addParameter :: String -> Construct ()
 addParameter name = do
@@ -529,7 +529,7 @@ pushReturn = pushInstr Return
 
 pushCall :: String -> Construct ()
 pushCall name = do
-  funcs <- use (the @"modlState" . the @"funcIdxs")
+  funcs <- use (the @"modlState" . the @"funcs")
 
   case lookup name funcs of
     Nothing -> error ("tried to call unknown function \"" ++ name ++ "\"")
@@ -564,7 +564,7 @@ pushLocalTee name = pushInstr . LocalTee =<< getVariable name
 
 getGlobal :: String -> Construct (GlobalIdx, SymIdx)
 getGlobal name = do
-  globals <- use (the @"modlState" . the @"globalIdxs")
+  globals <- use (the @"modlState" . the @"globals")
 
   case lookup name globals of
     Nothing -> error ("tried to get unknown global \"" ++ name ++ "\"")
