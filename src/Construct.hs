@@ -37,8 +37,8 @@ module Construct
   , pushDrop
   , pushLocalGet
   , pushLocalSet
-  , pushAddLocalSet
   , pushLocalTee
+  , pushAddLocalSet
   , pushAddLocalTee
   , pushGlobalGet
   , pushGlobalSet
@@ -619,12 +619,12 @@ pushLocalGet name = pushInstr . LocalGet =<< getVariable name
 pushLocalSet :: String -> Emit ()
 pushLocalSet name = pushInstr . LocalSet =<< getVariable name
 
+pushLocalTee :: String -> Emit ()
+pushLocalTee name = pushInstr . LocalTee =<< getVariable name
+
 pushAddLocalSet :: String -> ValType -> Emit ()
 pushAddLocalSet name valType =
   addLocal name valType >> pushLocalSet name
-
-pushLocalTee :: String -> Emit ()
-pushLocalTee name = pushInstr . LocalTee =<< getVariable name
 
 pushAddLocalTee :: String -> ValType -> Emit ()
 pushAddLocalTee name valType =
