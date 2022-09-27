@@ -51,7 +51,15 @@ data Instr =
   F32Const Float |
   F64Const Double |
   I32FuncRef Int32 SymIdx |
-  I32DataRef Int32 SymIdx Int32
+  I32DataRef Int32 SymIdx Int32 |
+  I32Add |
+  I32Sub |
+  I64Add |
+  I64Sub |
+  F32Add |
+  F32Sub |
+  F64Add |
+  F64Sub
   deriving (Show)
 
 newtype Expr =

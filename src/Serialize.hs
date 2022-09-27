@@ -333,6 +333,22 @@ instance Serialize Instr where
 
     I32DataRef {} -> error "can't serialize raw data ref"
 
+    I32Add -> byte 0x6A
+
+    I32Sub -> byte 0x6B
+
+    I64Add -> byte 0x7C
+
+    I64Sub -> byte 0x7D
+
+    F32Add -> byte 0x92
+
+    F32Sub -> byte 0x93
+
+    F64Add -> byte 0xA0
+
+    F64Sub -> byte 0xA1
+
 instance Serialize Expr where
   serialize (Expr instrs) = mconcat (map serialize instrs) <> byte 0x0B
 

@@ -55,6 +55,14 @@ module Construct
   , pushF32Const
   , pushF64Const
   , pushI32FuncRef
+  , pushI32Add
+  , pushI32Sub
+  , pushI64Add
+  , pushI64Sub
+  , pushF32Add
+  , pushF32Sub
+  , pushF64Add
+  , pushF64Sub
   )
   where
 
@@ -681,3 +689,27 @@ pushI32FuncRef name = do
   case lookup name funcRefs of
     Nothing -> error ("tried to create func ref from unknown function \"" ++ name ++ "\"")
     Just (funcRef, symIdx) -> pushInstr (I32FuncRef funcRef symIdx)
+
+pushI32Add :: Emit ()
+pushI32Add = pushInstr I32Add
+
+pushI32Sub :: Emit ()
+pushI32Sub = pushInstr I32Sub
+
+pushI64Add :: Emit ()
+pushI64Add = pushInstr I64Add
+
+pushI64Sub :: Emit ()
+pushI64Sub = pushInstr I64Sub
+
+pushF32Add :: Emit ()
+pushF32Add = pushInstr F32Add
+
+pushF32Sub :: Emit ()
+pushF32Sub = pushInstr F32Sub
+
+pushF64Add :: Emit ()
+pushF64Add = pushInstr F64Add
+
+pushF64Sub :: Emit ()
+pushF64Sub = pushInstr F64Sub

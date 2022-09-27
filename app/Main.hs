@@ -52,11 +52,10 @@ main = writeModule "./test.wasm" $ construct $ do
 
   declareExportFunc "global_test" [] [ValNumType I32] $ do
     pushGlobalGet "global"
-    pushDrop
-
-    pushI32Const 9
+    pushI32Const 5
+    pushI32Add
     pushGlobalSet "global"
-
+    
     pushGlobalGet "global"
 
   declareTable "table" =<< commitFuncRefs
