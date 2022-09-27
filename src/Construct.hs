@@ -467,7 +467,7 @@ commitCodes = do
   emitters <- use (the @"emitters")
 
   (the @"modl" . the @"codeSec") <~
-    sequence [emit names emitter | (names, emitter) <- emitters]
+    sequence [emit parameters emitter | (parameters, emitter) <- emitters]
 
 addLocal :: String -> ValType -> Emit ()
 addLocal name valType = do
