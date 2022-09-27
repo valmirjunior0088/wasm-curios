@@ -4,8 +4,7 @@ import Construct
 
 main :: IO ()
 main = writeModule "./test.wasm" $ construct $ do
-  declareTable "table" FuncRef (Bounded 4 4)
-  declareMem "mem" (Unbounded 1)
+  declareMem "mem" (MemType $ Unbounded 1)
 
   declareFunc "call_indirect_test" [] [ValNumType I32] $ do
     pushI32FuncRef "it_works"
@@ -42,3 +41,5 @@ main = writeModule "./test.wasm" $ construct $ do
     pushLocalGet "result"
 
   exportFunc "jump_table_test"
+
+  declareTable "table" =<< commitFuncRefs

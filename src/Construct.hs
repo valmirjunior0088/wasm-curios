@@ -16,6 +16,7 @@ module Construct
   , exportMem
   , exportGlobal
   , setStart
+  , commitFuncRefs
   , addLocal
   , pushUnreachable
   , pushNop
@@ -75,7 +76,6 @@ import Syntax.Types
   , GlobalType (..)
   , Limits (..)
   , MemType (..)
-  , Mut (..)
   )
 
 import Syntax.Module
@@ -149,7 +149,7 @@ type Construct = State ModlState
 
 construct :: Construct a -> Module
 construct action = modl where
-  ModlState { modl } = execState (action >> commitFuncRefs >> commitCodes) emptyState
+  ModlState { modl } = execState (action >> commitCodes) emptyState
 
 data Frame =
   RootFrame |
@@ -252,8 +252,8 @@ importFunc namespace name inputs outputs = do
   (the @"modl" . the @"linkingSec") <>= [info]
   (the @"funcs") <>= [(name, (funcIdx, symIdx))]
 
-importTable :: String -> String -> RefType -> Limits -> Construct ()
-importTable namespace name refType limits = do
+importTable :: String -> String -> TableType -> Construct ()
+importTable namespace name tableType = do
   tableSec <- use (the @"modl" . the @"tableSec")
 
   unless (null tableSec)
@@ -262,13 +262,13 @@ importTable namespace name refType limits = do
   tableIdx <- use (the @"nextTableIdx")
   (the @"nextTableIdx") .= succ tableIdx
 
-  let table = Import (Name namespace) (Name name) (ImportTable (TableType refType limits))
+  let table = Import (Name namespace) (Name name) (ImportTable tableType)
   
   (the @"modl" . the @"importSec") <>= [table]
   (the @"tables") <>= [(name, tableIdx)]
 
-importMem :: String -> String -> Limits -> Construct ()
-importMem namespace name limits = do
+importMem :: String -> String -> MemType -> Construct ()
+importMem namespace name memType = do
   memSec <- use (the @"modl" . the @"memSec")
 
   unless (null memSec)
@@ -277,13 +277,13 @@ importMem namespace name limits = do
   memIdx <- use (the @"nextMemIdx")
   (the @"nextMemIdx") .= succ memIdx
 
-  let mem = Import (Name namespace) (Name name) (ImportMem (MemType limits))
+  let mem = Import (Name namespace) (Name name) (ImportMem memType)
   
   (the @"modl" . the @"importSec") <>= [mem]
   (the @"mems") <>= [(name, memIdx)]
 
-importGlobal :: String -> String -> ValType -> Mut -> Construct ()
-importGlobal namespace name valType mut = do
+importGlobal :: String -> String -> GlobalType -> Construct ()
+importGlobal namespace name globalType = do
   globalSec <- use (the @"modl" . the @"globalSec")
 
   unless (null globalSec)
@@ -296,7 +296,7 @@ importGlobal namespace name valType mut = do
   (the @"nextSymIdx") .= succ symIdx
 
   let
-    global = Import (Name namespace) (Name name) (ImportGlobal (GlobalType valType mut))
+    global = Import (Name namespace) (Name name) (ImportGlobal globalType)
 
     flags = SymFlags
       { wasm_sym_binding_weak = False
@@ -343,28 +343,24 @@ declareFunc name inputs outputs emitter = do
   (the @"funcs") <>= [(name, (funcIdx, symIdx))]
   (the @"emitters") <>= [([parameter | (parameter, _) <- inputs], void emitter)]
 
-declareTable :: String -> RefType -> Limits -> Construct ()
-declareTable name refType limits = do
+declareTable :: String -> TableType -> Construct ()
+declareTable name tableType = do
   tableIdx <- use (the @"nextTableIdx")
   (the @"nextTableIdx") .= succ tableIdx
-
-  let table = Table (TableType refType limits)
   
-  (the @"modl" . the @"tableSec") <>= [table]
+  (the @"modl" . the @"tableSec") <>= [Table tableType]
   (the @"tables") <>= [(name, tableIdx)]
 
-declareMem :: String -> Limits -> Construct ()
-declareMem name limits = do
+declareMem :: String -> MemType -> Construct ()
+declareMem name memType = do
   memIdx <- use (the @"nextMemIdx")
   (the @"nextMemIdx") .= succ memIdx
 
-  let mem = Mem (MemType limits)
-
-  (the @"modl" . the @"memSec") <>= [mem]
+  (the @"modl" . the @"memSec") <>= [Mem memType]
   (the @"mems") <>= [(name, memIdx)]
 
-declareGlobal :: String -> ValType -> Mut -> Expr -> Construct ()
-declareGlobal name valType mut expr = do
+declareGlobal :: String -> GlobalType -> Expr -> Construct ()
+declareGlobal name globalType expr = do
   globalIdx <- use (the @"nextGlobalIdx")
   (the @"nextGlobalIdx") .= succ globalIdx
 
@@ -372,8 +368,6 @@ declareGlobal name valType mut expr = do
   (the @"nextSymIdx") .= succ symIdx
 
   let
-    global = Global (GlobalType valType mut) expr
-
     flags = SymFlags
       { wasm_sym_binding_weak = False
       , wasm_sym_binding_local = False
@@ -386,7 +380,7 @@ declareGlobal name valType mut expr = do
     
     info = SymInfo (SYMTAB_GLOBAL globalIdx (Just (Name name))) flags
   
-  (the @"modl" . the @"globalSec") <>= [global]
+  (the @"modl" . the @"globalSec") <>= [Global globalType expr]
   (the @"modl" . the @"linkingSec") <>= [info]
   (the @"globals") <>= [(name, (globalIdx, symIdx))]
 
@@ -445,8 +439,14 @@ setStart name = do
     Just (funcIdx, _) ->
       (the @"modl" . the @"startSec") .= Just funcIdx
 
-commitFuncRefs :: Construct ()
+commitFuncRefs :: Construct TableType
 commitFuncRefs = do
+  elemSec <- use (the @"modl" . the @"elemSec")
+  funcRefs <- use (the @"funcRefs")
+
+  unless (null elemSec && null funcRefs)
+    (error "func refs have already been committed")
+
   funcs <- use (the @"funcs")
 
   (the @"modl" . the @"elemSec") .=
@@ -454,6 +454,13 @@ commitFuncRefs = do
 
   (the @"funcRefs") .=
     [(name, (funcRef, symIdx)) | (name, (_, symIdx)) <- funcs | funcRef <- [1..]]
+  
+  let
+    size = 1 + length funcs
+    limits = Bounded (fromIntegral size) (fromIntegral size)
+    tableType = TableType FuncRef limits
+
+  return tableType
 
 commitCodes :: Construct ()
 commitCodes = do
