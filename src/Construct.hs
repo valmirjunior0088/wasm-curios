@@ -15,6 +15,10 @@ module Construct
   , exportTable
   , exportMem
   , exportGlobal
+  , declareExportFunc
+  , declareExportTable
+  , declareExportMem
+  , declareExportGlobal
   , setStart
   , commitFuncRefs
   , addLocal
@@ -427,6 +431,22 @@ exportGlobal name = do
 
     Just (globalIdx, _) ->
       (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportGlobal globalIdx)]
+
+declareExportFunc :: String -> [(String, ValType)] -> [ValType] -> Emit a -> Construct ()
+declareExportFunc name inputs outputs emitter =
+  declareFunc name inputs outputs emitter >> exportFunc name
+
+declareExportTable :: String -> TableType -> Construct ()
+declareExportTable name tableType =
+  declareTable name tableType >> exportTable name
+
+declareExportMem :: String -> MemType -> Construct ()
+declareExportMem name memType =
+  declareMem name memType >> exportMem name
+
+declareExportGlobal :: String -> GlobalType -> Expr -> Construct ()
+declareExportGlobal name globalType expr =
+  declareGlobal name globalType expr >> exportGlobal name
 
 setStart :: String -> Construct ()
 setStart name = do
