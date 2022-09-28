@@ -329,9 +329,9 @@ instance Serialize Instr where
 
     F64Const value -> byte 0x44 <> double value
 
-    I32FuncRef {} -> error "can't serialize raw func ref"
+    I32FuncRef value _ -> byte 0x41 <> signed value
 
-    I32DataRef {} -> error "can't serialize raw data ref"
+    I32DataRef value _ _ -> byte 0x41 <> signed value
 
     I32Add -> byte 0x6A
 
