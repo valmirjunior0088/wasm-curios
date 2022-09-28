@@ -515,8 +515,8 @@ pushUnreachable = pushInstr Unreachable
 pushNop :: Emit ()
 pushNop = pushInstr Nop
 
-pushFrame :: Frame -> String -> Emit ()
-pushFrame frame name = do
+pushFrame :: String -> Frame -> Emit ()
+pushFrame name frame = do
   (the @"frames") %= ((frame, []) :)
 
   (the @"labels" . mapped . _2) %= succ
@@ -547,9 +547,8 @@ getBlockType = \case
     return (BlockTypeIdx typeIdx)
 
 pushBlock :: String -> [ValType] -> [ValType] -> Emit ()
-pushBlock name inputs outputs = do
-  blockType <- getBlockType (inputs, outputs)
-  pushFrame (BlockFrame blockType) name
+pushBlock name inputs outputs =
+  pushFrame name . BlockFrame =<< getBlockType (inputs, outputs)
 
 popBlock :: Emit ()
 popBlock = popFrame >>= \case
@@ -557,9 +556,8 @@ popBlock = popFrame >>= \case
   _ -> error "tried to pop something that was not a block"
 
 pushLoop :: String -> [ValType] -> [ValType] -> Emit ()
-pushLoop name inputs outputs = do
-  blockType <- getBlockType (inputs, outputs)
-  pushFrame (LoopFrame blockType) name
+pushLoop name inputs outputs =
+  pushFrame name . LoopFrame =<< getBlockType (inputs, outputs)
 
 popLoop :: Emit ()
 popLoop = popFrame >>= \case
