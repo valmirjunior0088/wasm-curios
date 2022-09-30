@@ -8,8 +8,8 @@ main = writeModule "./test.wasm" $ construct $ do
   declareMem "mem" (MemType $ Unbounded 1)
 
   declareExportFunc "call_indirect_test" [] [ValNumType I32] $ do
+    pushI32Const 0
     pushI32FuncRef "jump_table_test"
-    pushI32Const 1
     pushCallIndirect [ValNumType I32] [ValNumType I32]
 
   declareExportFunc "jump_table_test" [("value", ValNumType I32)] [ValNumType I32] $ do
