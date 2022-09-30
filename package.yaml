@@ -21,6 +21,7 @@ dependencies:
 - generic-lens >= 2.2 && < 3
 
 default-extensions:
+- BinaryLiterals
 - LambdaCase
 - ParallelListComp
 - NamedFieldPuns
@@ -33,6 +34,17 @@ default-extensions:
 - DeriveGeneric
 - DataKinds
 - TypeApplications
+
+ghc-options:
+- -Wall
+- -Wcompat
+- -Widentities
+- -Wincomplete-record-updates
+- -Wincomplete-uni-patterns
+- -Wmissing-export-lists
+- -Wmissing-home-modules
+- -Wpartial-fields
+- -Wredundant-constraints
 
 library:
   source-dirs: src

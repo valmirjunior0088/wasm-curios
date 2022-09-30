@@ -1,5 +1,3 @@
-{-# LANGUAGE BinaryLiterals #-}
-
 module Encode.Utf8
   ( utf8Char
   , utf8String
