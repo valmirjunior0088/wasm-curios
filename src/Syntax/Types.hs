@@ -3,6 +3,13 @@ module Syntax.Types
   , VecType (..)
   , RefType (..)
   , ValType (..)
+  , i32
+  , i64
+  , f32
+  , f64
+  , v128
+  , funcRef
+  , externRef
   , ResultType (..)
   , FuncType (..)
   , Limits (..)
@@ -37,6 +44,27 @@ data ValType =
   ValVecType VecType |
   ValRefType RefType
   deriving (Show, Eq)
+
+i32 :: ValType
+i32 = ValNumType I32
+
+i64 :: ValType
+i64 = ValNumType I64
+
+f32 :: ValType
+f32 = ValNumType F32
+
+f64 :: ValType
+f64 = ValNumType F64
+
+v128 :: ValType
+v128 = ValVecType V128
+
+funcRef :: ValType
+funcRef = ValRefType FuncRef
+
+externRef :: ValType
+externRef = ValRefType ExternRef
 
 newtype ResultType =
   ResultType (Vec ValType)

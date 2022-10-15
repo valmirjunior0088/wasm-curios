@@ -95,6 +95,7 @@ import Syntax.Module
   , Start (..)
   , StartSec (..)
   , startSecId
+  , ElemKind (..)
   , Elem (..)
   , ElemSec (..)
   , elemSecId
@@ -229,8 +230,8 @@ instance Serialize ResultType where
   serialize (ResultType valTypes) = serialize valTypes
 
 instance Serialize FuncType where
-  serialize (FuncType input output) = 
-    byte 0x60 <> serialize input <> serialize output
+  serialize (FuncType inputs outputs) = 
+    byte 0x60 <> serialize inputs <> serialize outputs
 
 instance Serialize Limits where
   serialize = \case
@@ -296,58 +297,42 @@ instance Serialize Instr where
     Drop -> byte 0x1A
     
     LocalGet localIdx -> byte 0x20 <> serialize localIdx
-
     LocalSet localIdx -> byte 0x21 <> serialize localIdx
-
     LocalTee localIdx -> byte 0x22 <> serialize localIdx
 
     GlobalGet globalIdx _ -> byte 0x23 <> serialize globalIdx
-
     GlobalSet globalIdx _ -> byte 0x24 <> serialize globalIdx
 
     I32Load memArg -> byte 0x28 <> serialize memArg
+    I32Store memArg -> byte 0x36 <> serialize memArg
+    I32Const value -> byte 0x41 <> signed value
+    I32Add -> byte 0x6A
+    I32Sub -> byte 0x6B
+    I32Mul -> byte 0x6C
 
     I64Load memArg -> byte 0x29 <> serialize memArg
+    I64Store memArg -> byte 0x37 <> serialize memArg
+    I64Const value -> byte 0x42 <> signed value
+    I64Add -> byte 0x7C
+    I64Sub -> byte 0x7D
+    I64Mul -> byte 0x7E
 
     F32Load memArg -> byte 0x2A <> serialize memArg
+    F32Store memArg -> byte 0x38 <> serialize memArg
+    F32Const value -> byte 0x43 <> single value
+    F32Add -> byte 0x92
+    F32Sub -> byte 0x93
+    F32Mul -> byte 0x94
 
     F64Load memArg -> byte 0x2B <> serialize memArg
-
-    I32Store memArg -> byte 0x36 <> serialize memArg
-
-    I64Store memArg -> byte 0x37 <> serialize memArg
-
-    F32Store memArg -> byte 0x38 <> serialize memArg
-
     F64Store memArg -> byte 0x39 <> serialize memArg
-
-    I32Const value -> byte 0x41 <> signed value
-
-    I64Const value -> byte 0x42 <> signed value
-
-    F32Const value -> byte 0x43 <> single value
-
     F64Const value -> byte 0x44 <> double value
+    F64Add -> byte 0xA0
+    F64Sub -> byte 0xA1
+    F64Mul -> byte 0xA2
 
     I32FuncRef value _ -> byte 0x41 <> signed value
-
     I32DataRef value _ _ -> byte 0x41 <> signed value
-
-    I32Add -> byte 0x6A
-
-    I32Sub -> byte 0x6B
-
-    I64Add -> byte 0x7C
-
-    I64Sub -> byte 0x7D
-
-    F32Add -> byte 0x92
-
-    F32Sub -> byte 0x93
-
-    F64Add -> byte 0xA0
-
-    F64Sub -> byte 0xA1
 
 instance Serialize Expr where
   serialize (Expr instrs) = mconcat (map serialize instrs) <> byte 0x0B
@@ -413,9 +398,17 @@ instance Serialize Start where
 instance Build StartSec where
   build (StartSec start) = section startSecId (serialize start)
 
+instance Serialize ElemKind where
+  serialize = \case
+    ElemFuncRef -> byte 0
+
 instance Serialize Elem where
-  serialize (Elem expr funcIdxs) =
-    unsigned (0 :: Word32) <> serialize expr <> serialize funcIdxs
+  serialize (Elem tableIdx expr elemKind funcIdxs) =
+    unsigned (2 :: Word32)
+      <> serialize tableIdx
+      <> serialize expr
+      <> serialize elemKind
+      <> serialize funcIdxs
 
 instance Build ElemSec where
   build (ElemSec elems) = section elemSecId (serialize elems)

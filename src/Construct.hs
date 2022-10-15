@@ -1,8 +1,5 @@
 module Construct
-  ( Construct
-  , construct
-  , Emit
-  , emit
+  ( MonadConstruct (..)
   , importFunc
   , importTable
   , importMem
@@ -20,8 +17,10 @@ module Construct
   , declareExportMem
   , declareExportGlobal
   , setStart
-  , commitFuncRefs
-  , addLocal
+  , commitFuncTable
+  , startCode
+  , endCode
+  , pushLocal
   , pushUnreachable
   , pushNop
   , pushBlock
@@ -38,31 +37,37 @@ module Construct
   , pushLocalGet
   , pushLocalSet
   , pushLocalTee
-  , pushAddLocalSet
-  , pushAddLocalTee
   , pushGlobalGet
   , pushGlobalSet
   , pushI32Load
-  , pushI64Load
-  , pushF32Load
-  , pushF64Load
   , pushI32Store
-  , pushI64Store
-  , pushF32Store
-  , pushF64Store
   , pushI32Const
-  , pushI64Const
-  , pushF32Const
-  , pushF64Const
-  , pushI32FuncRef
   , pushI32Add
   , pushI32Sub
+  , pushI32Mul
+  , pushI64Load
+  , pushI64Store
+  , pushI64Const
   , pushI64Add
   , pushI64Sub
+  , pushI64Mul
+  , pushF32Load
+  , pushF32Store
+  , pushF32Const
   , pushF32Add
   , pushF32Sub
+  , pushF32Mul
+  , pushF64Load
+  , pushF64Store
+  , pushF64Const
   , pushF64Add
   , pushF64Sub
+  , pushF64Mul
+  , pushI32FuncRef
+  , ConstructT
+  , runConstructT
+  , Construct
+  , runConstruct
   )
   where
 
@@ -98,6 +103,7 @@ import Syntax.Module
   , Global (..)
   , Table (..)
   , Mem (..)
+  , ElemKind (..)
   , Elem (..)
   , Locals (..)
   , Func (..)
@@ -108,19 +114,17 @@ import Syntax.Module
 
 import Syntax.Instructions (BlockType (..), MemArg (..), Instr (..), Expr (..))
 import Syntax.LLVM (SymType (..), SymFlags (..), SymInfo (..))
-import Control.Monad (void, unless)
-import Control.Monad.Trans (lift)
-import Control.Monad.State (StateT, execStateT, State, execState)
+import Control.Monad (unless)
+import Control.Monad.State (StateT, execStateT, get, modify)
+import Control.Monad.Identity (Identity, runIdentity)
 import Data.Int (Int32, Int64)
 import Data.List (group)
 import GHC.Generics (Generic)
 import Data.Generics.Product (the)
-import Control.Lens (use, (.=), (%=), (<>=), (<~), mapped, _2, _head)
+import Control.Lens (Getting, ASetter, view, (.~), (%~), (<>~), mapped, _2, _head)
 
 data ModlState = ModlState
-  { modl :: Module
-  
-  , nextTypeIdx :: TypeIdx
+  { nextTypeIdx :: TypeIdx
   , nextFuncIdx :: FuncIdx
   , nextTableIdx :: TableIdx
   , nextMemIdx :: MemIdx
@@ -129,19 +133,19 @@ data ModlState = ModlState
 
   , types :: [(FuncType, TypeIdx)]
   , funcs :: [(String, (FuncIdx, SymIdx))]
-  , emitters :: [([String], Emit ())]
+  , parameters :: [[String]]
   , tables :: [(String, TableIdx)]
   , mems :: [(String, MemIdx)]
   , globals :: [(String, (GlobalIdx, SymIdx))]
-  , funcRefs :: [(String, (Int32, SymIdx))] 
+  , funcRefs :: [(String, (Int32, SymIdx))]
+
+  , funcTableIdx :: Maybe TableIdx
   }
   deriving (Generic)
 
-emptyState :: ModlState
-emptyState = ModlState 
-  { modl = emptyModule
-
-  , nextTypeIdx = 0
+emptyModlState :: ModlState
+emptyModlState = ModlState 
+  { nextTypeIdx = 0
   , nextFuncIdx = 0
   , nextTableIdx = 0
   , nextMemIdx = 0
@@ -150,18 +154,14 @@ emptyState = ModlState
 
   , types = []
   , funcs = []
-  , emitters = []
+  , parameters = []
   , tables = []
   , mems = []
   , globals = []
   , funcRefs = []
+
+  , funcTableIdx = Nothing
   }
-
-type Construct = State ModlState
-
-construct :: Construct a -> Module
-construct action = modl where
-  ModlState { modl } = execState (action >> commitCodes) emptyState
 
 data Frame =
   RootFrame |
@@ -197,39 +197,54 @@ emptyCodeState names = do
     , labels = [("root", 0)]
     }
 
-type Emit = StateT CodeState Construct
+data ConstructState = ConstructState
+  { modl :: Module
+  , modlState :: ModlState
+  , codeState :: CodeState
+  }
+  deriving (Generic)
 
-emit :: [String] -> Emit a -> Construct Code
-emit names emitter = do
-  CodeState { locals, frames } <- execStateT emitter (emptyCodeState names)
+emptyState :: ConstructState
+emptyState = ConstructState
+  { modl = emptyModule
+  , modlState = emptyModlState
+  , codeState = emptyCodeState []
+  }
 
-  case frames of
-    [(RootFrame, instrs)] ->
-      return (Code (Func (Vec built) (Expr instrs))) where
-        build valTypes = Locals (fromIntegral $ length valTypes) (head valTypes)
-        built = [build valTypes | valTypes <- group locals]
+class Monad m => MonadConstruct m where
+  getC :: m ConstructState
+  modC :: (ConstructState -> ConstructState) -> m ()
 
-    _ ->
-      error "found undelimited frame while trying to emit code"
+use :: MonadConstruct m => Getting a ConstructState a -> m a
+use lens = view lens <$> getC
 
-getType :: FuncType -> Construct TypeIdx
+(.=) :: MonadConstruct m => ASetter ConstructState ConstructState a b -> b -> m ()
+(.=) lens value = modC (lens .~ value)
+
+(%=) :: MonadConstruct m => ASetter ConstructState ConstructState a b -> (a -> b) -> m ()
+(%=) lens action = modC (lens %~ action)
+
+(<>=) :: (MonadConstruct m, Semigroup a) => ASetter ConstructState ConstructState a a -> a -> m ()
+(<>=) lens value = modC (lens <>~ value)
+
+getType :: MonadConstruct m => FuncType -> m TypeIdx
 getType funcType = do
-  types <- use (the @"types")
+  types <- use (the @"modlState" . the @"types")
 
   case lookup funcType types of
     Nothing -> do
-      typeIdx <- use (the @"nextTypeIdx")
-      (the @"nextTypeIdx") .= succ typeIdx
+      typeIdx <- use (the @"modlState" . the @"nextTypeIdx")
+      (the @"modlState" . the @"nextTypeIdx") .= succ typeIdx
 
       (the @"modl" . the @"typeSec") <>= [funcType]
-      (the @"types") <>= [(funcType, typeIdx)]
+      (the @"modlState" . the @"types") <>= [(funcType, typeIdx)]
 
       return typeIdx
     
     Just typeIdx ->
       return typeIdx
 
-importFunc :: String -> String -> [ValType] -> [ValType] -> Construct ()
+importFunc :: MonadConstruct m => String -> String -> [ValType] -> [ValType] -> m ()
 importFunc namespace name inputs outputs = do
   funcSec <- use (the @"modl" . the @"funcSec")
 
@@ -239,11 +254,11 @@ importFunc namespace name inputs outputs = do
   typeIdx <- getType
     (FuncType (ResultType (Vec inputs)) (ResultType (Vec outputs)))
 
-  funcIdx <- use (the @"nextFuncIdx")
-  (the @"nextFuncIdx") .= succ funcIdx
+  funcIdx <- use (the @"modlState" . the @"nextFuncIdx")
+  (the @"modlState" . the @"nextFuncIdx") .= succ funcIdx
 
-  symIdx <- use (the @"nextSymIdx")
-  (the @"nextSymIdx") .= succ symIdx
+  symIdx <- use (the @"modlState" . the @"nextSymIdx")
+  (the @"modlState" . the @"nextSymIdx") .= succ symIdx
 
   let
     func = Import (Name namespace) (Name name) (ImportFunc typeIdx)
@@ -262,50 +277,50 @@ importFunc namespace name inputs outputs = do
   
   (the @"modl" . the @"importSec") <>= [func]
   (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"funcs") <>= [(name, (funcIdx, symIdx))]
+  (the @"modlState" . the @"funcs") <>= [(name, (funcIdx, symIdx))]
 
-importTable :: String -> String -> TableType -> Construct ()
+importTable :: MonadConstruct m => String -> String -> TableType -> m ()
 importTable namespace name tableType = do
   tableSec <- use (the @"modl" . the @"tableSec")
 
   unless (null tableSec)
     (error "cannot import a table after having declared a table")
 
-  tableIdx <- use (the @"nextTableIdx")
-  (the @"nextTableIdx") .= succ tableIdx
+  tableIdx <- use (the @"modlState" . the @"nextTableIdx")
+  (the @"modlState" . the @"nextTableIdx") .= succ tableIdx
 
   let table = Import (Name namespace) (Name name) (ImportTable tableType)
   
   (the @"modl" . the @"importSec") <>= [table]
-  (the @"tables") <>= [(name, tableIdx)]
+  (the @"modlState" . the @"tables") <>= [(name, tableIdx)]
 
-importMem :: String -> String -> MemType -> Construct ()
+importMem :: MonadConstruct m => String -> String -> MemType -> m ()
 importMem namespace name memType = do
   memSec <- use (the @"modl" . the @"memSec")
 
   unless (null memSec)
     (error "cannot import a mem after having declared a mem")
 
-  memIdx <- use (the @"nextMemIdx")
-  (the @"nextMemIdx") .= succ memIdx
+  memIdx <- use (the @"modlState" . the @"nextMemIdx")
+  (the @"modlState" . the @"nextMemIdx") .= succ memIdx
 
   let mem = Import (Name namespace) (Name name) (ImportMem memType)
   
   (the @"modl" . the @"importSec") <>= [mem]
-  (the @"mems") <>= [(name, memIdx)]
+  (the @"modlState" . the @"mems") <>= [(name, memIdx)]
 
-importGlobal :: String -> String -> GlobalType -> Construct ()
+importGlobal :: MonadConstruct m => String -> String -> GlobalType -> m ()
 importGlobal namespace name globalType = do
   globalSec <- use (the @"modl" . the @"globalSec")
 
   unless (null globalSec)
     (error "cannot import a global after having declared a global")
 
-  globalIdx <- use (the @"nextGlobalIdx")
-  (the @"nextGlobalIdx") .= succ globalIdx
+  globalIdx <- use (the @"modlState" . the @"nextGlobalIdx")
+  (the @"modlState" . the @"nextGlobalIdx") .= succ globalIdx
 
-  symIdx <- use (the @"nextSymIdx")
-  (the @"nextSymIdx") .= succ symIdx
+  symIdx <- use (the @"modlState" . the @"nextSymIdx")
+  (the @"modlState" . the @"nextSymIdx") .= succ symIdx
 
   let
     global = Import (Name namespace) (Name name) (ImportGlobal globalType)
@@ -324,18 +339,18 @@ importGlobal namespace name globalType = do
   
   (the @"modl" . the @"importSec") <>= [global]
   (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"globals") <>= [(name, (globalIdx, symIdx))]
+  (the @"modlState" . the @"globals") <>= [(name, (globalIdx, symIdx))]
 
-declareFunc :: String -> [(String, ValType)] -> [ValType] -> Emit a -> Construct ()
-declareFunc name inputs outputs emitter = do
+declareFunc :: MonadConstruct m => String -> [(String, ValType)] -> [ValType] -> m ()
+declareFunc name inputs outputs = do
   typeIdx <- getType
     (FuncType (ResultType (Vec [valType | (_, valType) <- inputs])) (ResultType (Vec outputs)))
 
-  funcIdx <- use (the @"nextFuncIdx")
-  (the @"nextFuncIdx") .= succ funcIdx
+  funcIdx <- use (the @"modlState" . the @"nextFuncIdx")
+  (the @"modlState" . the @"nextFuncIdx") .= succ funcIdx
 
-  symIdx <- use (the @"nextSymIdx")
-  (the @"nextSymIdx") .= succ symIdx
+  symIdx <- use (the @"modlState" . the @"nextSymIdx")
+  (the @"modlState" . the @"nextSymIdx") .= succ symIdx
 
   let
     flags = SymFlags
@@ -352,32 +367,32 @@ declareFunc name inputs outputs emitter = do
   
   (the @"modl" . the @"funcSec") <>= [typeIdx]
   (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"funcs") <>= [(name, (funcIdx, symIdx))]
-  (the @"emitters") <>= [([parameter | (parameter, _) <- inputs], void emitter)]
+  (the @"modlState" . the @"funcs") <>= [(name, (funcIdx, symIdx))]
+  (the @"modlState" . the @"parameters") <>= [[parameter | (parameter, _) <- inputs]]
 
-declareTable :: String -> TableType -> Construct ()
+declareTable :: MonadConstruct m => String -> TableType -> m ()
 declareTable name tableType = do
-  tableIdx <- use (the @"nextTableIdx")
-  (the @"nextTableIdx") .= succ tableIdx
+  tableIdx <- use (the @"modlState" . the @"nextTableIdx")
+  (the @"modlState" . the @"nextTableIdx") .= succ tableIdx
   
   (the @"modl" . the @"tableSec") <>= [Table tableType]
-  (the @"tables") <>= [(name, tableIdx)]
+  (the @"modlState" . the @"tables") <>= [(name, tableIdx)]
 
-declareMem :: String -> MemType -> Construct ()
+declareMem :: MonadConstruct m => String -> MemType -> m ()
 declareMem name memType = do
-  memIdx <- use (the @"nextMemIdx")
-  (the @"nextMemIdx") .= succ memIdx
+  memIdx <- use (the @"modlState" . the @"nextMemIdx")
+  (the @"modlState" . the @"nextMemIdx") .= succ memIdx
 
   (the @"modl" . the @"memSec") <>= [Mem memType]
-  (the @"mems") <>= [(name, memIdx)]
+  (the @"modlState" . the @"mems") <>= [(name, memIdx)]
 
-declareGlobal :: String -> GlobalType -> Expr -> Construct ()
+declareGlobal :: MonadConstruct m => String -> GlobalType -> Expr -> m ()
 declareGlobal name globalType expr = do
-  globalIdx <- use (the @"nextGlobalIdx")
-  (the @"nextGlobalIdx") .= succ globalIdx
+  globalIdx <- use (the @"modlState" . the @"nextGlobalIdx")
+  (the @"modlState" . the @"nextGlobalIdx") .= succ globalIdx
 
-  symIdx <- use (the @"nextSymIdx")
-  (the @"nextSymIdx") .= succ symIdx
+  symIdx <- use (the @"modlState" . the @"nextSymIdx")
+  (the @"modlState" . the @"nextSymIdx") .= succ symIdx
 
   let
     flags = SymFlags
@@ -394,11 +409,11 @@ declareGlobal name globalType expr = do
   
   (the @"modl" . the @"globalSec") <>= [Global globalType expr]
   (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"globals") <>= [(name, (globalIdx, symIdx))]
+  (the @"modlState" . the @"globals") <>= [(name, (globalIdx, symIdx))]
 
-exportFunc :: String -> Construct ()
+exportFunc :: MonadConstruct m => String -> m ()
 exportFunc name = do
-  funcs <- use (the @"funcs")
+  funcs <- use (the @"modlState" . the @"funcs")
 
   case lookup name funcs of
     Nothing ->
@@ -407,9 +422,9 @@ exportFunc name = do
     Just (funcIdx, _) ->
       (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportFunc funcIdx)]
 
-exportTable :: String -> Construct ()
+exportTable :: MonadConstruct m => String -> m ()
 exportTable name = do
-  tables <- use (the @"tables")
+  tables <- use (the @"modlState" . the @"tables")
 
   case lookup name tables of
     Nothing ->
@@ -418,9 +433,9 @@ exportTable name = do
     Just tableIdx ->
       (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportTable tableIdx)]
 
-exportMem :: String -> Construct ()
+exportMem :: MonadConstruct m => String -> m ()
 exportMem name = do
-  mems <- use (the @"mems")
+  mems <- use (the @"modlState" . the @"mems")
 
   case lookup name mems of
     Nothing ->
@@ -429,9 +444,9 @@ exportMem name = do
     Just memIdx ->
       (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportMem memIdx)]
 
-exportGlobal :: String -> Construct ()
+exportGlobal :: MonadConstruct m => String -> m ()
 exportGlobal name = do
-  globals <- use (the @"globals")
+  globals <- use (the @"modlState" . the @"globals")
 
   case lookup name globals of
     Nothing ->
@@ -440,99 +455,126 @@ exportGlobal name = do
     Just (globalIdx, _) ->
       (the @"modl" . the @"exportSec") <>= [Export (Name name) (ExportGlobal globalIdx)]
 
-declareExportFunc :: String -> [(String, ValType)] -> [ValType] -> Emit a -> Construct ()
-declareExportFunc name inputs outputs emitter =
-  declareFunc name inputs outputs emitter >> exportFunc name
+declareExportFunc :: MonadConstruct m => String -> [(String, ValType)] -> [ValType] -> m ()
+declareExportFunc name inputs outputs =
+  declareFunc name inputs outputs >> exportFunc name
 
-declareExportTable :: String -> TableType -> Construct ()
+declareExportTable :: MonadConstruct m => String -> TableType -> m ()
 declareExportTable name tableType =
   declareTable name tableType >> exportTable name
 
-declareExportMem :: String -> MemType -> Construct ()
+declareExportMem :: MonadConstruct m => String -> MemType -> m ()
 declareExportMem name memType =
   declareMem name memType >> exportMem name
 
-declareExportGlobal :: String -> GlobalType -> Expr -> Construct ()
+declareExportGlobal :: MonadConstruct m => String -> GlobalType -> Expr -> m ()
 declareExportGlobal name globalType expr =
   declareGlobal name globalType expr >> exportGlobal name
 
-setStart :: String -> Construct ()
+setStart :: MonadConstruct m => String -> m ()
 setStart name = do
-  funcs <- use (the @"funcs")
+  funcs <- use (the @"modlState" . the @"funcs")
 
   case lookup name funcs of
-    Nothing ->
-      error ("tried to set unknown function \"" ++ name ++ "\" as start")
+    Nothing -> error ("tried to set unknown function \"" ++ name ++ "\" as start")
+    Just (funcIdx, _) -> (the @"modl" . the @"startSec") .= Just funcIdx
 
-    Just (funcIdx, _) ->
-      (the @"modl" . the @"startSec") .= Just funcIdx
+commitFuncTable :: MonadConstruct m => Maybe (String, String) -> m ()
+commitFuncTable imported = do
+  funcRefs <- use (the @"modlState" . the @"funcRefs")
 
-commitFuncRefs :: Construct TableType
-commitFuncRefs = do
-  elemSec <- use (the @"modl" . the @"elemSec")
-  funcRefs <- use (the @"funcRefs")
+  unless (null funcRefs)
+    (error "func table already exists")
 
-  unless (null elemSec && null funcRefs)
-    (error "func refs have already been committed")
+  tableIdx <- use (the @"modlState" . the @"nextTableIdx")
+  (the @"modlState" . the @"nextTableIdx") .= succ tableIdx
+  
+  funcs <- use (the @"modlState" . the @"funcs")
 
-  funcs <- use (the @"funcs")
+  (the @"modl" . the @"elemSec") <>=
+    [Elem tableIdx (Expr [I32Const 1]) ElemFuncRef (Vec [funcIdx | (_, (funcIdx, _)) <- funcs])]
 
-  (the @"modl" . the @"elemSec") .=
-    [Elem (Expr [I32Const 1]) (Vec [funcIdx | (_, (funcIdx, _)) <- funcs])]
-
-  (the @"funcRefs") .=
+  (the @"modlState" . the @"funcRefs") .=
     [(name, (funcRef, symIdx)) | (name, (_, symIdx)) <- funcs | funcRef <- [1..]]
   
+  (the @"modlState" . the @"funcTableIdx") .= Just tableIdx
+  
   let
-    size = 1 + length funcs
-    limits = Bounded (fromIntegral size) (fromIntegral size)
+    size = fromIntegral (1 + length funcs)
+    limits = Bounded size size
     tableType = TableType FuncRef limits
+  
+  case imported of
+    Nothing ->
+      (the @"modl" . the @"tableSec") <>= [Table tableType]
+    
+    Just (namespace, name) -> do
+      tableSec <- use (the @"modl" . the @"tableSec")
 
-  return tableType
+      unless (null tableSec)
+        (error "cannot import a func table after having declared a table")
 
-commitCodes :: Construct ()
-commitCodes = do
-  emitters <- use (the @"emitters")
+      (the @"modl" . the @"importSec") <>=
+        [Import (Name namespace) (Name name) (ImportTable tableType)]
 
-  (the @"modl" . the @"codeSec") <~
-    sequence [emit parameters emitter | (parameters, emitter) <- emitters]
+startCode :: MonadConstruct m => m ()
+startCode = do
+  parameters <- use (the @"modlState" . the @"parameters")
+  (the @"modlState" . the @"parameters") .= tail parameters
+  
+  (the @"codeState") .= emptyCodeState (head parameters)
 
-addLocal :: String -> ValType -> Emit ()
-addLocal name valType = do
-  localIdx <- use (the @"nextLocalIdx")
-  (the @"nextLocalIdx") .= succ localIdx
+endCode :: MonadConstruct m => m ()
+endCode = do
+  CodeState { locals, frames } <- use (the @"codeState")
 
-  (the @"locals") <>= [valType]
-  (the @"variables") <>= [(name, localIdx)]
+  case frames of
+    [(RootFrame, instrs)] -> do
+      let
+        build valTypes = Locals (fromIntegral $ length valTypes) (head valTypes)
+        built = [build valTypes | valTypes <- group locals]
+      
+      (the @"modl" . the @"codeSec") <>= [Code (Func (Vec built) (Expr instrs))]
 
-pushInstr :: Instr -> Emit ()
+    _ ->
+      error "found undelimited frame while trying to emit code"
+
+pushLocal :: MonadConstruct m => String -> ValType -> m ()
+pushLocal name valType = do
+  localIdx <- use (the @"codeState" . the @"nextLocalIdx")
+  (the @"codeState" . the @"nextLocalIdx") .= succ localIdx
+
+  (the @"codeState" . the @"locals") <>= [valType]
+  (the @"codeState" . the @"variables") <>= [(name, localIdx)]
+
+pushInstr :: MonadConstruct m => Instr -> m ()
 pushInstr instr =
-  (the @"frames" . _head . _2) <>= [instr]
+  (the @"codeState" . the @"frames" . _head . _2) <>= [instr]
 
-pushUnreachable :: Emit ()
+pushUnreachable :: MonadConstruct m => m ()
 pushUnreachable = pushInstr Unreachable
 
-pushNop :: Emit ()
+pushNop :: MonadConstruct m => m ()
 pushNop = pushInstr Nop
 
-pushFrame :: String -> Frame -> Emit ()
+pushFrame :: MonadConstruct m => String -> Frame -> m ()
 pushFrame name frame = do
-  (the @"frames") %= ((frame, []) :)
+  (the @"codeState" . the @"frames") %= ((frame, []) :)
 
-  (the @"labels" . mapped . _2) %= succ
-  (the @"labels") %= ((name, 0) :)
+  (the @"codeState" . the @"labels" . mapped . _2) %= succ
+  (the @"codeState" . the @"labels") %= ((name, 0) :)
 
-popFrame :: Emit (Frame, [Instr])
+popFrame :: MonadConstruct m => m (Frame, [Instr])
 popFrame = do
-  frames <- use (the @"frames")
-  (the @"frames") .= tail frames
+  frames <- use (the @"codeState" . the @"frames")
+  (the @"codeState" . the @"frames") .= tail frames
 
-  (the @"labels") %= tail
-  (the @"labels" . mapped . _2) %= pred
+  (the @"codeState" . the @"labels") %= tail
+  (the @"codeState" . the @"labels" . mapped . _2) %= pred
 
   return (head frames)
 
-getBlockType :: ([ValType], [ValType]) -> Emit BlockType
+getBlockType :: MonadConstruct m => ([ValType], [ValType]) -> m BlockType
 getBlockType = \case
   ([], []) ->
     return BlockEmpty
@@ -541,173 +583,199 @@ getBlockType = \case
     return (BlockValType valType)
   
   (inputs, outputs) -> do
-    typeIdx <- lift $ getType
+    typeIdx <- getType
       (FuncType (ResultType (Vec inputs)) (ResultType (Vec outputs)))
 
     return (BlockTypeIdx typeIdx)
 
-pushBlock :: String -> [ValType] -> [ValType] -> Emit ()
+pushBlock :: MonadConstruct m => String -> [ValType] -> [ValType] -> m ()
 pushBlock name inputs outputs =
   pushFrame name . BlockFrame =<< getBlockType (inputs, outputs)
 
-popBlock :: Emit ()
+popBlock :: MonadConstruct m => m ()
 popBlock = popFrame >>= \case
   (BlockFrame blockType, instrs) -> pushInstr (Block blockType instrs)
   _ -> error "tried to pop something that was not a block"
 
-pushLoop :: String -> [ValType] -> [ValType] -> Emit ()
+pushLoop :: MonadConstruct m => String -> [ValType] -> [ValType] -> m ()
 pushLoop name inputs outputs =
   pushFrame name . LoopFrame =<< getBlockType (inputs, outputs)
 
-popLoop :: Emit ()
+popLoop :: MonadConstruct m => m ()
 popLoop = popFrame >>= \case
   (LoopFrame blockType, instrs) -> pushInstr (Loop blockType instrs)
   _ -> error "tried to pop something that was not a loop"
 
-getLabel :: String -> Emit LabelIdx
+getLabel :: MonadConstruct m => String -> m LabelIdx
 getLabel name = do
-  labels <- use (the @"labels")
+  labels <- use (the @"codeState" . the @"labels")
 
   case lookup name labels of
     Nothing -> error ("tried to get unknown label \"" ++ name ++ "\"")
     Just labelIdx -> return labelIdx
 
-pushBr :: String -> Emit ()
+pushBr :: MonadConstruct m => String -> m ()
 pushBr name = pushInstr . Br =<< getLabel name
 
-pushBrIf :: String -> Emit ()
+pushBrIf :: MonadConstruct m => String -> m ()
 pushBrIf name = pushInstr . BrIf =<< getLabel name
 
-pushBrTable :: [String] -> String -> Emit ()
+pushBrTable :: MonadConstruct m => [String] -> String -> m ()
 pushBrTable names name =
   pushInstr =<< BrTable <$> (Vec <$> mapM getLabel names) <*> getLabel name
 
-pushReturn :: Emit ()
+pushReturn :: MonadConstruct m => m ()
 pushReturn = pushInstr Return
 
-pushCall :: String -> Emit ()
+pushCall :: MonadConstruct m => String -> m ()
 pushCall name = do
-  funcs <- lift $ use (the @"funcs")
+  funcs <- use (the @"modlState" . the @"funcs")
 
   case lookup name funcs of
     Nothing -> error ("tried to call unknown function \"" ++ name ++ "\"")
     Just (funcIdx, symIdx) -> pushInstr (Call funcIdx symIdx)
 
-pushCallIndirect :: [ValType] -> [ValType] -> Emit ()
+pushCallIndirect :: MonadConstruct m => [ValType] -> [ValType] -> m ()
 pushCallIndirect inputs outputs = do
-  typeIdx <- lift $ getType
+  tableIdx <- use (the @"modlState" . the @"funcTableIdx") >>= \case
+    Nothing -> error "tried to call_indirect without having set a func table"
+    Just tableIdx -> return tableIdx
+
+  typeIdx <- getType
     (FuncType (ResultType (Vec inputs)) (ResultType (Vec outputs)))
     
-  pushInstr (CallIndirect typeIdx 0)
+  pushInstr (CallIndirect typeIdx tableIdx)
 
-pushDrop :: Emit ()
+pushDrop :: MonadConstruct m => m ()
 pushDrop = pushInstr Drop
 
-getVariable :: String -> Emit LocalIdx
+getVariable :: MonadConstruct m => String -> m LocalIdx
 getVariable name = do
-  variables <- use (the @"variables")
+  variables <- use (the @"codeState" . the @"variables")
 
   case lookup name variables of
     Nothing -> error ("tried to get unknown variable \"" ++ name ++ "\"")
     Just localIdx -> return localIdx
 
-pushLocalGet :: String -> Emit ()
+pushLocalGet :: MonadConstruct m => String -> m ()
 pushLocalGet name = pushInstr . LocalGet =<< getVariable name
 
-pushLocalSet :: String -> Emit ()
+pushLocalSet :: MonadConstruct m => String -> m ()
 pushLocalSet name = pushInstr . LocalSet =<< getVariable name
 
-pushLocalTee :: String -> Emit ()
+pushLocalTee :: MonadConstruct m => String -> m ()
 pushLocalTee name = pushInstr . LocalTee =<< getVariable name
 
-pushAddLocalSet :: String -> ValType -> Emit ()
-pushAddLocalSet name valType =
-  addLocal name valType >> pushLocalSet name
-
-pushAddLocalTee :: String -> ValType -> Emit ()
-pushAddLocalTee name valType =
-  addLocal name valType >> pushLocalTee name
-
-getGlobal :: String -> Emit (GlobalIdx, SymIdx)
+getGlobal :: MonadConstruct m => String -> m (GlobalIdx, SymIdx)
 getGlobal name = do
-  globals <- lift $ use (the @"globals")
+  globals <- use (the @"modlState" . the @"globals")
 
   case lookup name globals of
     Nothing -> error ("tried to get unknown global \"" ++ name ++ "\"")
     Just (globalIdx, symIdx) -> return (globalIdx, symIdx)
 
-pushGlobalGet :: String -> Emit ()
+pushGlobalGet :: MonadConstruct m => String -> m ()
 pushGlobalGet name =
   pushInstr . uncurry GlobalGet =<< getGlobal name
 
-pushGlobalSet :: String -> Emit ()
+pushGlobalSet :: MonadConstruct m => String -> m ()
 pushGlobalSet name =
   pushInstr . uncurry GlobalSet =<< getGlobal name
 
-pushI32Load :: MemArg -> Emit ()
+pushI32Load :: MonadConstruct m => MemArg -> m ()
 pushI32Load memArg = pushInstr (I32Load memArg)
 
-pushI64Load :: MemArg -> Emit ()
-pushI64Load memArg = pushInstr (I64Load memArg)
-
-pushF32Load :: MemArg -> Emit ()
-pushF32Load memArg = pushInstr (F32Load memArg)
-
-pushF64Load :: MemArg -> Emit ()
-pushF64Load memArg = pushInstr (F64Load memArg)
-
-pushI32Store :: MemArg -> Emit ()
+pushI32Store :: MonadConstruct m => MemArg -> m ()
 pushI32Store memArg = pushInstr (I32Store memArg)
 
-pushI64Store :: MemArg -> Emit ()
-pushI64Store memArg = pushInstr (I64Store memArg)
-
-pushF32Store :: MemArg -> Emit ()
-pushF32Store memArg = pushInstr (F32Store memArg)
-
-pushF64Store :: MemArg -> Emit ()
-pushF64Store memArg = pushInstr (F64Store memArg)
-
-pushI32Const :: Int32 -> Emit ()
+pushI32Const :: MonadConstruct m => Int32 -> m ()
 pushI32Const value = pushInstr (I32Const value)
 
-pushI64Const :: Int64 -> Emit ()
+pushI32Add :: MonadConstruct m => m ()
+pushI32Add = pushInstr I32Add
+
+pushI32Sub :: MonadConstruct m => m ()
+pushI32Sub = pushInstr I32Sub
+
+pushI32Mul :: MonadConstruct m => m ()
+pushI32Mul = pushInstr I32Mul
+
+pushI64Load :: MonadConstruct m => MemArg -> m ()
+pushI64Load memArg = pushInstr (I64Load memArg)
+
+pushI64Store :: MonadConstruct m => MemArg -> m ()
+pushI64Store memArg = pushInstr (I64Store memArg)
+
+pushI64Const :: MonadConstruct m => Int64 -> m ()
 pushI64Const value = pushInstr (I64Const value)
 
-pushF32Const :: Float -> Emit ()
+pushI64Add :: MonadConstruct m => m ()
+pushI64Add = pushInstr I64Add
+
+pushI64Sub :: MonadConstruct m => m ()
+pushI64Sub = pushInstr I64Sub
+
+pushI64Mul :: MonadConstruct m => m ()
+pushI64Mul = pushInstr I64Mul
+
+pushF32Load :: MonadConstruct m => MemArg -> m ()
+pushF32Load memArg = pushInstr (F32Load memArg)
+
+pushF32Store :: MonadConstruct m => MemArg -> m ()
+pushF32Store memArg = pushInstr (F32Store memArg)
+
+pushF32Const :: MonadConstruct m => Float -> m ()
 pushF32Const value = pushInstr (F32Const value)
 
-pushF64Const :: Double -> Emit ()
+pushF32Add :: MonadConstruct m => m ()
+pushF32Add = pushInstr F32Add
+
+pushF32Sub :: MonadConstruct m => m ()
+pushF32Sub = pushInstr F32Sub
+
+pushF32Mul :: MonadConstruct m => m ()
+pushF32Mul = pushInstr F32Mul
+
+pushF64Load :: MonadConstruct m => MemArg -> m ()
+pushF64Load memArg = pushInstr (F64Load memArg)
+
+pushF64Store :: MonadConstruct m => MemArg -> m ()
+pushF64Store memArg = pushInstr (F64Store memArg)
+
+pushF64Const :: MonadConstruct m => Double -> m ()
 pushF64Const value = pushInstr (F64Const value)
 
-pushI32FuncRef :: String -> Emit ()
+pushF64Add :: MonadConstruct m => m ()
+pushF64Add = pushInstr F64Add
+
+pushF64Sub :: MonadConstruct m => m ()
+pushF64Sub = pushInstr F64Sub
+
+pushF64Mul :: MonadConstruct m => m ()
+pushF64Mul = pushInstr F64Mul
+
+pushI32FuncRef :: MonadConstruct m => String -> m ()
 pushI32FuncRef name = do
-  funcRefs <- lift $ use (the @"funcRefs")
+  funcRefs <- use (the @"modlState" . the @"funcRefs")
 
   case lookup name funcRefs of
     Nothing -> error ("tried to create func ref from unknown function \"" ++ name ++ "\"")
     Just (funcRef, symIdx) -> pushInstr (I32FuncRef funcRef symIdx)
 
-pushI32Add :: Emit ()
-pushI32Add = pushInstr I32Add
+newtype ConstructT m a =
+  ConstructT (StateT ConstructState m a)
+  deriving (Functor, Applicative, Monad)
 
-pushI32Sub :: Emit ()
-pushI32Sub = pushInstr I32Sub
+instance Monad m => MonadConstruct (ConstructT m) where
+  getC = ConstructT get
+  modC = ConstructT . modify
 
-pushI64Add :: Emit ()
-pushI64Add = pushInstr I64Add
+runConstructT :: Monad m => ConstructT m a -> m Module
+runConstructT (ConstructT action) =
+  let go ConstructState { modl } = modl
+  in go <$> execStateT action emptyState
 
-pushI64Sub :: Emit ()
-pushI64Sub = pushInstr I64Sub
+type Construct = ConstructT Identity
 
-pushF32Add :: Emit ()
-pushF32Add = pushInstr F32Add
-
-pushF32Sub :: Emit ()
-pushF32Sub = pushInstr F32Sub
-
-pushF64Add :: Emit ()
-pushF64Add = pushInstr F64Add
-
-pushF64Sub :: Emit ()
-pushF64Sub = pushInstr F64Sub
+runConstruct :: Construct a -> Module
+runConstruct = runIdentity . runConstructT

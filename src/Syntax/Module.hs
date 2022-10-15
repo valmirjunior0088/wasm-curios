@@ -27,6 +27,7 @@ module Syntax.Module
   , Start (..)
   , StartSec (..)
   , startSecId
+  , ElemKind (..)
   , Elem (..)
   , ElemSec (..)
   , elemSecId
@@ -159,8 +160,12 @@ newtype StartSec =
 startSecId :: Word8
 startSecId = 8
 
+data ElemKind =
+  ElemFuncRef
+  deriving (Show)
+
 data Elem =
-  Elem Expr (Vec FuncIdx)
+  Elem TableIdx Expr ElemKind (Vec FuncIdx)
   deriving (Show)
 
 newtype ElemSec =

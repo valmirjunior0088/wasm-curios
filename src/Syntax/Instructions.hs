@@ -6,7 +6,17 @@ module Syntax.Instructions
   )
   where
 
-import Syntax.Conventions (TypeIdx, FuncIdx, TableIdx, GlobalIdx, LocalIdx, LabelIdx, SymIdx, Vec)
+import Syntax.Conventions
+  ( TypeIdx
+  , FuncIdx
+  , TableIdx
+  , GlobalIdx
+  , LocalIdx
+  , LabelIdx
+  , SymIdx
+  , Vec
+  )
+
 import Syntax.Types (ValType)
 import Data.Word (Word32)
 import Data.Int (Int32, Int64)
@@ -39,27 +49,31 @@ data Instr =
   GlobalGet GlobalIdx SymIdx |
   GlobalSet GlobalIdx SymIdx |
   I32Load MemArg |
-  I64Load MemArg |
-  F32Load MemArg |
-  F64Load MemArg |
   I32Store MemArg |
-  I64Store MemArg |
-  F32Store MemArg |
-  F64Store MemArg |
   I32Const Int32 |
-  I64Const Int64 |
-  F32Const Float |
-  F64Const Double |
-  I32FuncRef Int32 SymIdx |
-  I32DataRef Int32 SymIdx Int32 |
   I32Add |
   I32Sub |
+  I32Mul |
+  I64Load MemArg |
+  I64Store MemArg |
+  I64Const Int64 |
   I64Add |
   I64Sub |
+  I64Mul |
+  F32Load MemArg |
+  F32Store MemArg |
+  F32Const Float |
   F32Add |
   F32Sub |
+  F32Mul |
+  F64Load MemArg |
+  F64Store MemArg |
+  F64Const Double |
   F64Add |
-  F64Sub
+  F64Sub |
+  F64Mul |
+  I32FuncRef Int32 SymIdx |
+  I32DataRef Int32 SymIdx Int32
   deriving (Show)
 
 newtype Expr =
