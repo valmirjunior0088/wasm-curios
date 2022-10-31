@@ -1,5 +1,5 @@
 module Syntax.LLVM
-  ( linkingVersion 
+  ( linkingVersion
   , SymType (..)
   , SymFlags (..)
   , SymInfo (..)

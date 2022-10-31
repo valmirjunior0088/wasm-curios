@@ -31,7 +31,7 @@ data Buffer = Buffer
 
 instance Semigroup Buffer where
   (<>) one other =
-    Buffer { size = size + size', contents = contents <> contents' } where
+    Buffer (size + size') (contents <> contents') where
       Buffer { size = size, contents = contents } = one
       Buffer { size = size', contents = contents' } = other
 
@@ -79,7 +79,7 @@ adjustOffsets Buffer { size } = map (addOffset size)
 
 instance Semigroup RelocBuffer where
   (<>) one other =
-    RelocBuffer { target = target <> target', relocs = relocs ++ adjustOffsets target relocs' } where
+    RelocBuffer (target <> target') (relocs ++ adjustOffsets target relocs') where
       RelocBuffer { target = target, relocs = relocs } = one
       RelocBuffer { target = target', relocs = relocs' } = other
 

@@ -45,6 +45,7 @@ module Construct
   , pushI32Add
   , pushI32Sub
   , pushI32Mul
+  , pushI32Eq
   , pushI64Load
   , pushI64Store
   , pushI64Const
@@ -114,11 +115,12 @@ import Syntax.Module
 
 import Syntax.Instructions (BlockType (..), MemArg (..), Instr (..), Expr (..))
 import Syntax.LLVM (SymType (..), SymFlags (..), SymInfo (..))
-import Control.Monad (unless)
+import Control.Monad (when, unless)
 import Control.Monad.State (StateT, execStateT, get, modify)
 import Control.Monad.Identity (Identity, runIdentity)
 import Data.Int (Int32, Int64)
 import Data.List (group)
+import Data.Maybe (isJust)
 import GHC.Generics (Generic)
 import Data.Generics.Product (the)
 import Control.Lens (Getting, ASetter, view, (.~), (%~), (<>~), mapped, _2, _head)
@@ -141,10 +143,10 @@ data ModlState = ModlState
 
   , funcTableIdx :: Maybe TableIdx
   }
-  deriving (Generic)
+  deriving (Show, Generic)
 
 emptyModlState :: ModlState
-emptyModlState = ModlState 
+emptyModlState = ModlState
   { nextTypeIdx = 0
   , nextFuncIdx = 0
   , nextTableIdx = 0
@@ -167,6 +169,7 @@ data Frame =
   RootFrame |
   BlockFrame BlockType |
   LoopFrame BlockType
+  deriving (Show)
 
 data CodeState = CodeState
   { nextLocalIdx :: LocalIdx
@@ -177,15 +180,15 @@ data CodeState = CodeState
   , frames :: [(Frame, [Instr])]
   , labels :: [(String, LabelIdx)]
   }
-  deriving (Generic)
+  deriving (Show, Generic)
 
 emptyCodeState :: [String] -> CodeState
 emptyCodeState names = do
   let
     go (parameters, nextLocalIdx) name =
-      (parameters ++ [(name, nextLocalIdx)], succ nextLocalIdx)
+      ((name, nextLocalIdx) : parameters, succ nextLocalIdx)
 
-    (variables, localIdx) = foldl go ([], 0) names 
+    (variables, localIdx) = foldl go ([], 0) names
 
   CodeState
     { nextLocalIdx = localIdx
@@ -202,7 +205,7 @@ data ConstructState = ConstructState
   , modlState :: ModlState
   , codeState :: CodeState
   }
-  deriving (Generic)
+  deriving (Show, Generic)
 
 emptyState :: ConstructState
 emptyState = ConstructState
@@ -212,20 +215,20 @@ emptyState = ConstructState
   }
 
 class Monad m => MonadConstruct m where
-  getC :: m ConstructState
-  modC :: (ConstructState -> ConstructState) -> m ()
+  getConstruct :: m ConstructState
+  modifyConstruct :: (ConstructState -> ConstructState) -> m ()
 
 use :: MonadConstruct m => Getting a ConstructState a -> m a
-use lens = view lens <$> getC
+use lens = view lens <$> getConstruct
 
 (.=) :: MonadConstruct m => ASetter ConstructState ConstructState a b -> b -> m ()
-(.=) lens value = modC (lens .~ value)
+(.=) lens value = modifyConstruct (lens .~ value)
 
 (%=) :: MonadConstruct m => ASetter ConstructState ConstructState a b -> (a -> b) -> m ()
-(%=) lens action = modC (lens %~ action)
+(%=) lens action = modifyConstruct (lens %~ action)
 
 (<>=) :: (MonadConstruct m, Semigroup a) => ASetter ConstructState ConstructState a a -> a -> m ()
-(<>=) lens value = modC (lens <>~ value)
+(<>=) lens value = modifyConstruct (lens <>~ value)
 
 getType :: MonadConstruct m => FuncType -> m TypeIdx
 getType funcType = do
@@ -237,10 +240,10 @@ getType funcType = do
       (the @"modlState" . the @"nextTypeIdx") .= succ typeIdx
 
       (the @"modl" . the @"typeSec") <>= [funcType]
-      (the @"modlState" . the @"types") <>= [(funcType, typeIdx)]
+      (the @"modlState" . the @"types") %= ((funcType, typeIdx) :)
 
       return typeIdx
-    
+
     Just typeIdx ->
       return typeIdx
 
@@ -272,12 +275,12 @@ importFunc namespace name inputs outputs = do
       , wasm_sym_explicit_name = True
       , wasm_sym_no_strip = False
       }
-    
+
     info = SymInfo (SYMTAB_FUNCTION funcIdx (Just (Name name))) flags
-  
+
   (the @"modl" . the @"importSec") <>= [func]
   (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"modlState" . the @"funcs") <>= [(name, (funcIdx, symIdx))]
+  (the @"modlState" . the @"funcs") %= ((name, (funcIdx, symIdx)) :)
 
 importTable :: MonadConstruct m => String -> String -> TableType -> m ()
 importTable namespace name tableType = do
@@ -290,9 +293,9 @@ importTable namespace name tableType = do
   (the @"modlState" . the @"nextTableIdx") .= succ tableIdx
 
   let table = Import (Name namespace) (Name name) (ImportTable tableType)
-  
+
   (the @"modl" . the @"importSec") <>= [table]
-  (the @"modlState" . the @"tables") <>= [(name, tableIdx)]
+  (the @"modlState" . the @"tables") %= ((name, tableIdx) :)
 
 importMem :: MonadConstruct m => String -> String -> MemType -> m ()
 importMem namespace name memType = do
@@ -305,9 +308,9 @@ importMem namespace name memType = do
   (the @"modlState" . the @"nextMemIdx") .= succ memIdx
 
   let mem = Import (Name namespace) (Name name) (ImportMem memType)
-  
+
   (the @"modl" . the @"importSec") <>= [mem]
-  (the @"modlState" . the @"mems") <>= [(name, memIdx)]
+  (the @"modlState" . the @"mems") %= ((name, memIdx) :)
 
 importGlobal :: MonadConstruct m => String -> String -> GlobalType -> m ()
 importGlobal namespace name globalType = do
@@ -334,12 +337,12 @@ importGlobal namespace name globalType = do
       , wasm_sym_explicit_name = True
       , wasm_sym_no_strip = False
       }
-    
+
     info = SymInfo (SYMTAB_GLOBAL globalIdx (Just (Name name))) flags
-  
+
   (the @"modl" . the @"importSec") <>= [global]
   (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"modlState" . the @"globals") <>= [(name, (globalIdx, symIdx))]
+  (the @"modlState" . the @"globals") %= ((name, (globalIdx, symIdx)) :)
 
 declareFunc :: MonadConstruct m => String -> [(String, ValType)] -> [ValType] -> m ()
 declareFunc name inputs outputs = do
@@ -364,19 +367,19 @@ declareFunc name inputs outputs = do
       }
 
     info = SymInfo (SYMTAB_FUNCTION funcIdx (Just (Name name))) flags
-  
+
   (the @"modl" . the @"funcSec") <>= [typeIdx]
   (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"modlState" . the @"funcs") <>= [(name, (funcIdx, symIdx))]
+  (the @"modlState" . the @"funcs") %= ((name, (funcIdx, symIdx)) :)
   (the @"modlState" . the @"parameters") <>= [[parameter | (parameter, _) <- inputs]]
 
 declareTable :: MonadConstruct m => String -> TableType -> m ()
 declareTable name tableType = do
   tableIdx <- use (the @"modlState" . the @"nextTableIdx")
   (the @"modlState" . the @"nextTableIdx") .= succ tableIdx
-  
+
   (the @"modl" . the @"tableSec") <>= [Table tableType]
-  (the @"modlState" . the @"tables") <>= [(name, tableIdx)]
+  (the @"modlState" . the @"tables") %= ((name, tableIdx) :)
 
 declareMem :: MonadConstruct m => String -> MemType -> m ()
 declareMem name memType = do
@@ -384,7 +387,7 @@ declareMem name memType = do
   (the @"modlState" . the @"nextMemIdx") .= succ memIdx
 
   (the @"modl" . the @"memSec") <>= [Mem memType]
-  (the @"modlState" . the @"mems") <>= [(name, memIdx)]
+  (the @"modlState" . the @"mems") %= ((name, memIdx) :)
 
 declareGlobal :: MonadConstruct m => String -> GlobalType -> Expr -> m ()
 declareGlobal name globalType expr = do
@@ -404,12 +407,12 @@ declareGlobal name globalType expr = do
       , wasm_sym_explicit_name = True
       , wasm_sym_no_strip = False
       }
-    
+
     info = SymInfo (SYMTAB_GLOBAL globalIdx (Just (Name name))) flags
-  
+
   (the @"modl" . the @"globalSec") <>= [Global globalType expr]
   (the @"modl" . the @"linkingSec") <>= [info]
-  (the @"modlState" . the @"globals") <>= [(name, (globalIdx, symIdx))]
+  (the @"modlState" . the @"globals") %= ((name, (globalIdx, symIdx)) :)
 
 exportFunc :: MonadConstruct m => String -> m ()
 exportFunc name = do
@@ -481,14 +484,14 @@ setStart name = do
 
 commitFuncTable :: MonadConstruct m => Maybe (String, String) -> m ()
 commitFuncTable imported = do
-  funcRefs <- use (the @"modlState" . the @"funcRefs")
+  funcTableIdx <- use (the @"modlState" . the @"funcTableIdx")
 
-  unless (null funcRefs)
-    (error "func table already exists")
+  when (isJust funcTableIdx)
+    (error "cannot commit func table twice")
 
   tableIdx <- use (the @"modlState" . the @"nextTableIdx")
   (the @"modlState" . the @"nextTableIdx") .= succ tableIdx
-  
+
   funcs <- use (the @"modlState" . the @"funcs")
 
   (the @"modl" . the @"elemSec") <>=
@@ -496,18 +499,18 @@ commitFuncTable imported = do
 
   (the @"modlState" . the @"funcRefs") .=
     [(name, (funcRef, symIdx)) | (name, (_, symIdx)) <- funcs | funcRef <- [1..]]
-  
+
   (the @"modlState" . the @"funcTableIdx") .= Just tableIdx
-  
+
   let
     size = fromIntegral (1 + length funcs)
     limits = Bounded size size
     tableType = TableType FuncRef limits
-  
+
   case imported of
     Nothing ->
       (the @"modl" . the @"tableSec") <>= [Table tableType]
-    
+
     Just (namespace, name) -> do
       tableSec <- use (the @"modl" . the @"tableSec")
 
@@ -521,7 +524,7 @@ startCode :: MonadConstruct m => m ()
 startCode = do
   parameters <- use (the @"modlState" . the @"parameters")
   (the @"modlState" . the @"parameters") .= tail parameters
-  
+
   (the @"codeState") .= emptyCodeState (head parameters)
 
 endCode :: MonadConstruct m => m ()
@@ -533,7 +536,7 @@ endCode = do
       let
         build valTypes = Locals (fromIntegral $ length valTypes) (head valTypes)
         built = [build valTypes | valTypes <- group locals]
-      
+
       (the @"modl" . the @"codeSec") <>= [Code (Func (Vec built) (Expr instrs))]
 
     _ ->
@@ -545,7 +548,7 @@ pushLocal name valType = do
   (the @"codeState" . the @"nextLocalIdx") .= succ localIdx
 
   (the @"codeState" . the @"locals") <>= [valType]
-  (the @"codeState" . the @"variables") <>= [(name, localIdx)]
+  (the @"codeState" . the @"variables") %= ((name, localIdx) :)
 
 pushInstr :: MonadConstruct m => Instr -> m ()
 pushInstr instr =
@@ -578,10 +581,10 @@ getBlockType :: MonadConstruct m => ([ValType], [ValType]) -> m BlockType
 getBlockType = \case
   ([], []) ->
     return BlockEmpty
-  
+
   ([], [valType]) ->
     return (BlockValType valType)
-  
+
   (inputs, outputs) -> do
     typeIdx <- getType
       (FuncType (ResultType (Vec inputs)) (ResultType (Vec outputs)))
@@ -643,7 +646,7 @@ pushCallIndirect inputs outputs = do
 
   typeIdx <- getType
     (FuncType (ResultType (Vec inputs)) (ResultType (Vec outputs)))
-    
+
   pushInstr (CallIndirect typeIdx tableIdx)
 
 pushDrop :: MonadConstruct m => m ()
@@ -699,6 +702,9 @@ pushI32Sub = pushInstr I32Sub
 
 pushI32Mul :: MonadConstruct m => m ()
 pushI32Mul = pushInstr I32Mul
+
+pushI32Eq :: MonadConstruct m => m ()
+pushI32Eq = pushInstr I32Eq
 
 pushI64Load :: MonadConstruct m => MemArg -> m ()
 pushI64Load memArg = pushInstr (I64Load memArg)
@@ -767,13 +773,12 @@ newtype ConstructT m a =
   deriving (Functor, Applicative, Monad)
 
 instance Monad m => MonadConstruct (ConstructT m) where
-  getC = ConstructT get
-  modC = ConstructT . modify
+  getConstruct = ConstructT get
+  modifyConstruct = ConstructT . modify
 
 runConstructT :: Monad m => ConstructT m a -> m Module
 runConstructT (ConstructT action) =
-  let go ConstructState { modl } = modl
-  in go <$> execStateT action emptyState
+  view (the @"modl") <$> execStateT action emptyState
 
 type Construct = ConstructT Identity
 

@@ -54,6 +54,7 @@ data Instr =
   I32Add |
   I32Sub |
   I32Mul |
+  I32Eq |
   I64Load MemArg |
   I64Store MemArg |
   I64Const Int64 |
